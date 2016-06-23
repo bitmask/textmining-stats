@@ -1,7 +1,9 @@
 import argparse
 from collections import defaultdict
 import re
-
+import Bio
+import shlex
+from subprocess import Popen, PIPE
 
 ################################################################################
 # This code is written by Helen Cook, with contributions from ...
@@ -45,44 +47,82 @@ def same_normalization(annot, an, uniprot):
 
 def blast(seq1, seq2):
     # run blast on these sequences and if they have above 90% identity on 90% of the sequence, then consider them to be the same
-    # TODO
+    tmpdir = "/tmp"
+
+    # this is not threadsafe, but we're only using one thread anyway
+    tmp1 = tmpdir + "/tmp1.fna"
+    tmp2 = tmpdir + "/tmp2.fna"
+    with open(tmp1, 'w') as f1:
+        f1.write(seq1 + "\n")
+    with open(tmp2, 'w') as f2:
+        f2.write(seq2 + "\n")
+
+    command = "blastp -query " + tmp1 + " -subject " + tmp2 + " -outfmt '6 pident'"
+    process = Popen(shlex.split(command), stdout=PIPE)
+    out, err = process.communicate()
+    exit_code = process.wait()
+
+    if out:
+        if float(out) > 90:
+            return True
+        return False
     return False
 
 
 def inter_annotator(annotations, n_annotators, uniprot):
     # Print interannotator agreement for all documens 
+    stats = {}
     for document in annotations.keys():
+        print "document: " + document
         if len(annotations[document].keys()) == n_annotators:
-            print document
             for user1 in annotations[document].keys():
+                if not user1 in stats:
+                    stats[user1] = {}
                 for user2 in annotations[document].keys():
                     if user1 == user2:
                         continue
+                    if not user2 in stats[user1]:
+                        stats[user1][user2] = {}
+                    if not document in stats[user1][user2]:
+                        print "put document " + document + " in stats"
+                        stats[user1][user2][document] = {}
+                        stats[user1][user2][document]['tp'] = 0
+                        stats[user1][user2][document]['fp'] = 0
+                        stats[user1][user2][document]['fn'] = 0
+
                     for annot in annotations[document][user1]:
-                        #print annot
                         match = same_boundaries(annot, annotations[document][user2])
                         if match:
                             if same_normalization(annot, match, uniprot):
-                                # print for debugging
                                 print "agree " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end']
+                                stats[user1][user2][document]['tp'] += 1
+
                             else:
                                 print "norm diff " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm'] + " " + match['norm']
+                                stats[user1][user2][document]['fp'] += 1
+                                stats[user1][user2][document]['fn'] += 1
+
                         else:
                             print "no match for " + user1 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm']
+                            stats[user1][user2][document]['fp'] += 1
 
-    # in above code need to calculate precision and recall of each user against each other user, and populate stats
-    # TODO
-    stats = {} # dictionary user -> user -> recall/precision
+                    stats[user1][user2][document]['fn'] += len(annotations[document][user2]) - stats[user1][user2][document]['tp'] - stats[user1][user2][document]['fn']
+                    stats[user1][user2][document]['precision'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fp'] )
+                    stats[user1][user2][document]['recall'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fn'] )
+
     return stats;
 
 
 def print_stats(stats):
     for user1 in stats:
         for user2 in stats[user1]:
-            recall = stats[user1][user2]['recall']
-            precision = stats[user1][user2]['precision']
-            fscore = 2 * recall * precision / (precision + recall)
-            print user1 + "\t" + user2 + "\t" + recall + "\t" + precision + "\t" + fscore
+            for document in stats[user1][user2]:
+                recall = stats[user1][user2][document]['recall']
+                precision = stats[user1][user2][document]['precision']
+                fscore = 0
+                if precision + recall > 0:
+                    fscore = 2 * recall * precision / (precision + recall)
+                print user1 + "\t" + user2 + "\t" + document + "\t" + str(recall) + "\t" + str(precision) + "\t" + str(fscore)
     return True
 
 
