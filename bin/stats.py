@@ -4,6 +4,7 @@ import re
 import Bio
 import shlex
 from subprocess import Popen, PIPE
+import numpy as np
 
 ################################################################################
 # This code is written by Helen Cook, with contributions from ...
@@ -22,6 +23,51 @@ def parse_annotations(inputfile, annotations):
                     annot = {'text': text, 'norm': normid, 'start': start, 'end': end, 'user': user, 'docid': docid, 'annottype': annottype}
                     annotations[docid][user].append(annot)
     return annotations
+    
+# def parse_tagger_output(tagger_output_file, entities_file, annotations):
+# 	#Parse the tagger output file and also include the x_entities entries
+	
+# 	input_tag = open(tagger_output_file, "r")
+# 	input_ent = open(entities_file, "r")
+# 	tag_dat = input_tag.readlines()
+# 	ent_dat = input_ent.readlines()
+# 	input_tag.close()
+# 	input_ent.close()
+
+# 	tag_array = np.chararray([len(tag_dat), 9], itemsize = 20) #Added an extra column for normids addition
+# 	ent_array = np.chararray([len(ent_dat), 3], itemsize = 20)
+
+# 	#Make and array for tagger data
+# 	for n, tag in enumerate(tag_dat):
+# 		col_tag = tag.rstrip("\n").split("\t")
+# 		for i in range(len(col_tag)):
+# 			tag_array[n][i] = str(col_tag[i])
+
+# 	#Make an array for entities data
+# 	for n, ent in enumerate(ent_dat):
+# 		col_ent = ent.rstrip("\n").split("\t")
+# 		for i in range(len(col_ent)):
+# 			ent_array[n][i] = str(col_ent[i])
+
+
+# 	#Match the entities normalized names with tagger data
+# 	tag_inds = tag_array[:,7]
+# 	for entry in ent_array:
+# 		inds = np.where(tag_inds == entry[0])
+# 		if np.shape(inds) != (1L,0L):
+# 			for num_list in inds:
+# 				for i in num_list:
+# 					tag_array[i][8] = entry[2]
+					
+# 	#Add tag_array to the annotations dict
+# 	user = 'tagger' #For identification from other users.
+# 	text = 'foobar' #Placeholder
+# 	for entry in tag_array:
+# 		(docid, unused, unused2, start, end, annot, taxid, serialno, normid) = entry
+# 		annot = {'text': text, 'norm': normid, 'start': start, 'end': end, 'user': user, 'docid': docid}
+# 		annotations[docid][user].append(annot)
+
+# 	return annotations
 
 
 def same_boundaries(annot, annot_list):
