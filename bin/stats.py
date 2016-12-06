@@ -4,7 +4,7 @@ import re
 import Bio
 import shlex
 from subprocess import Popen, PIPE
-import numpy as np
+import os.path
 
 ################################################################################
 # This code is written by Helen Cook, with contributions from ...
@@ -12,13 +12,21 @@ import numpy as np
 # Distributed under the BSD license. 
 ################################################################################
 
+def get_user_from_inputfile(inputfile):
+    field = os.path.basename(inputfile).split(".")
+    if field[1] == "test2":
+        return "Helen"
+    user = field[1].split("-")
+    return user[0]
+
 def parse_annotations(inputfile, annotations):
     # Input format is one annotation per line
+    user = get_user_from_inputfile(inputfile)
     with open(inputfile, 'r') as f:
         for line in f:
             cols = line.rstrip("\n").split("\t")
             if len(cols) > 5:
-                (annotid, doctype, docid, annottype, annotdict, normid, blank, user, unused, text, unused2, start, end) = cols
+                (annotid, doctype, docid, annottype, annotdict, normid, blank, userX, unused, text, unused2, start, end) = cols
                 if annotdict == "NCBITax" or annotdict == "Uniprot":
                     annot = {'text': text, 'norm': normid, 'start': start, 'end': end, 'user': user, 'docid': docid, 'annottype': annottype}
                     annotations[docid][user].append(annot)
@@ -69,7 +77,6 @@ def parse_annotations(inputfile, annotations):
 
 # 	return annotations
 
-
 def same_boundaries(annot, annot_list):
     # check whether an annotation with the same boundaries as annot exists on the annot_list
     for an in annot_list:
@@ -78,7 +85,7 @@ def same_boundaries(annot, annot_list):
     return None
 
 
-def same_normalization(annot, an, uniprot):
+def same_normalization(annot, an, uniprot, taxtree):
     if an['norm'] == annot['norm']:
         return True
     else:
@@ -86,8 +93,18 @@ def same_normalization(annot, an, uniprot):
             # if a normalization was not entered by the user, then say they are not the same
             return False
         if an['annottype'] == "e_2":
-            if blast(uniprot[an['norm']]['sequence'], uniprot[annot['norm']]['sequence']):
+            # for proteins, check that they are close enough to each other
+            if an['norm'] in uniprot and annot['norm'] in uniprot:
+                if blast(uniprot[an['norm']]['sequence'], uniprot[annot['norm']]['sequence']):
+                    return True
+            else:
+                return False
+        elif an['annottype'] == "e_1":
+            # for species, check that they are nearby in the tree
+            if int(an['norm']) in climb_tax_tree(int(annot['norm']), taxtree) or int(annot['norm']) in climb_tax_tree(int(an['norm']), taxtree):
                 return True
+            else:
+                return False
     return False
 
 
@@ -109,66 +126,107 @@ def blast(seq1, seq2):
     exit_code = process.wait()
 
     if out:
+        o = out.split("\n")
+        out = o[0]
         if float(out) > 90:
             return True
         return False
     return False
 
 
-def inter_annotator(annotations, n_annotators, uniprot):
+def inter_annotator(annotations, uniprot, taxtree):
     # Print interannotator agreement for all documens 
     stats = {}
     for document in annotations.keys():
-        print "document: " + document
-        if len(annotations[document].keys()) == n_annotators:
-            for user1 in annotations[document].keys():
-                if not user1 in stats:
-                    stats[user1] = {}
-                for user2 in annotations[document].keys():
-                    if user1 == user2:
-                        continue
-                    if not user2 in stats[user1]:
-                        stats[user1][user2] = {}
-                    if not document in stats[user1][user2]:
-                        print "put document " + document + " in stats"
-                        stats[user1][user2][document] = {}
-                        stats[user1][user2][document]['tp'] = 0
-                        stats[user1][user2][document]['fp'] = 0
-                        stats[user1][user2][document]['fn'] = 0
+        for user1 in annotations[document].keys():
+            if not user1 in stats:
+                stats[user1] = {}
+            for user2 in annotations[document].keys():
+                if user1 == user2:
+                    continue
+                if not user2 in stats[user1]:
+                    stats[user1][user2] = {}
+                if not document in stats[user1][user2]:
+                    stats[user1][user2][document] = {}
+                    stats[user1][user2][document]['tp'] = 0
+                    stats[user1][user2][document]['fp'] = 0
+                    stats[user1][user2][document]['fn'] = 0
 
-                    for annot in annotations[document][user1]:
-                        match = same_boundaries(annot, annotations[document][user2])
-                        if match:
-                            if same_normalization(annot, match, uniprot):
-                                print "agree " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end']
-                                stats[user1][user2][document]['tp'] += 1
+                    stats[user1][user2][document]['n_tp'] = 0
+                    stats[user1][user2][document]['n_fp'] = 0
+                    stats[user1][user2][document]['n_fn'] = 0
 
-                            else:
-                                print "norm diff " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm'] + " " + match['norm']
-                                stats[user1][user2][document]['fp'] += 1
-                                stats[user1][user2][document]['fn'] += 1
+                for annot in annotations[document][user1]:
+                    match = same_boundaries(annot, annotations[document][user2])
+                    if match:
+                        stats[user1][user2][document]['n_tp'] += 1
+
+                        if same_normalization(annot, match, uniprot, taxtree):
+                            #print "agree " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end']
+                            stats[user1][user2][document]['tp'] += 1
 
                         else:
-                            print "no match for " + user1 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm']
+                            #print "norm diff " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm'] + " " + match['norm']
                             stats[user1][user2][document]['fp'] += 1
+                            stats[user1][user2][document]['fn'] += 1
 
-                    stats[user1][user2][document]['fn'] += len(annotations[document][user2]) - stats[user1][user2][document]['tp'] - stats[user1][user2][document]['fn']
-                    stats[user1][user2][document]['precision'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fp'] )
-                    stats[user1][user2][document]['recall'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fn'] )
+                    else:
+                        #print "no match for " + user1 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm']
+                        stats[user1][user2][document]['fp'] += 1
+                        stats[user1][user2][document]['n_fp'] += 1
+
+                stats[user1][user2][document]['fn'] += len(annotations[document][user2]) - stats[user1][user2][document]['tp'] - stats[user1][user2][document]['fn']
+
+                stats[user1][user2][document]['n_fn'] += len(annotations[document][user2]) - stats[user1][user2][document]['n_tp'] - stats[user1][user2][document]['n_fn']
+
+                stats[user1][user2][document]['precision'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fp'] )
+                stats[user1][user2][document]['recall'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fn'] )
+
+                stats[user1][user2][document]['n_precision'] = float(stats[user1][user2][document]['n_tp']) / ( stats[user1][user2][document]['n_tp'] +  stats[user1][user2][document]['n_fp'] )
+                stats[user1][user2][document]['n_recall'] = float(stats[user1][user2][document]['n_tp']) / ( stats[user1][user2][document]['n_tp'] +  stats[user1][user2][document]['n_fn'] )
 
     return stats;
 
 
 def print_stats(stats):
+    print "user1\tuser2\tdocument\tprecision\trecall\tn_precision\tn_recall"
     for user1 in stats:
         for user2 in stats[user1]:
+            ac_tp = 0
+            ac_fp = 0
+            ac_fn = 0
+
+            ac_n_tp = 0
+            ac_n_fp = 0
+            ac_n_fn = 0
+
             for document in stats[user1][user2]:
                 recall = stats[user1][user2][document]['recall']
                 precision = stats[user1][user2][document]['precision']
+                n_recall = stats[user1][user2][document]['n_recall']
+                n_precision = stats[user1][user2][document]['n_precision']
+                tp = stats[user1][user2][document]['tp']
+                fp = stats[user1][user2][document]['fp']
+                fn = stats[user1][user2][document]['fn']
+                ac_tp += tp
+                ac_fp += fp
+                ac_fn += fn
+
+                ac_n_tp += stats[user1][user2][document]['n_tp']
+                ac_n_fp += stats[user1][user2][document]['n_fp']
+                ac_n_fn += stats[user1][user2][document]['n_fn']
+
                 fscore = 0
                 if precision + recall > 0:
                     fscore = 2 * recall * precision / (precision + recall)
-                print user1 + "\t" + user2 + "\t" + document + "\t" + str(recall) + "\t" + str(precision) + "\t" + str(fscore)
+                #print user1 + "\t" + user2 + "\t" + document + "\t" + str(tp) + "\t" + str(fp) + "\t" + str(fn) 
+                print user1 + "\t" + user2 + "\t" + document + "\t" + str(precision) + "\t" + str(recall) + "\t" + str(n_precision) + "\t" + str(n_recall) 
+            ac_precision = float(ac_tp) / ( ac_tp + ac_fp)
+            ac_recall = float(ac_tp) / ( ac_tp + ac_fn)
+
+            ac_n_precision = float(ac_n_tp) / ( ac_n_tp + ac_n_fp)
+            ac_n_recall = float(ac_n_tp) / ( ac_n_tp + ac_n_fn)
+            print "overall " + user1 + "\t" + user2 + "\t" + str(ac_precision) + "\t" + str(ac_recall) + "\t" + str(ac_n_precision) + "\t" + str(ac_n_recall)
     return True
 
 
@@ -356,10 +414,58 @@ def parse_uniprot_single_xml(filename):
         
     return allproteins
 
+def read_project_list(filename):
+    projects = []
+    with open(filename, 'r') as f:
+        for line in f:
+            cols = line.rstrip("\n").split("\t")
+            print cols[0]
+            projects.append(cols[0])
+    return projects
+
+# todo get these from ncbi_taxonomy module.... ???
+def parse_taxtree(filename, returnlevel=False):
+    with open(filename) as f:
+        # read in the ncbi tax nodes.dmp file
+        taxtree = {}
+        taxlevel = {}
+        for line in f:
+            array = line.rstrip("\n").split("|")
+            taxid = int(array[0].strip("\t"))
+            parent = int(array[1].strip("\t"))
+            level = array[2].strip("\t")
+            taxtree[taxid] = parent
+            taxlevel[taxid] = level
+        if returnlevel:
+            return (taxtree, taxlevel)
+        else:
+            return taxtree
+
+def climb_tax_tree(taxid, taxtree):
+    # climb the tree to the root and return the lineage
+    taxid = int(taxid)
+
+    if taxid in taxtree:
+        parent = taxtree[taxid]
+    else:
+        # TODO this is a problem
+        #print "id " + str(taxid) + " not found in taxtree.  this is bad"
+        return []
+
+    lineage = [taxid]
+    while parent != 1:
+        lineage.insert(0, parent)
+        if parent in taxtree:
+            parent = taxtree[parent]
+        else:
+            print "parent " + str(parent) + " not found in taxtree.  this is very bad"
+            return -1
+    return lineage
 
 def main():
     parser = argparse.ArgumentParser(description="Calculate interannotator etc stats")
     # TODO arguments should be the same as the tagger
+
     parser.add_argument('-f', '--files',
                 required=True,
                 default = [],
@@ -372,18 +478,23 @@ def main():
                 dest='uniprot',
                 help="uniprot xml dump")
 
+    parser.add_argument('-t', '--taxonomy',
+                required=True,
+                dest='taxonomy',
+                help="ncbi taxonomy nodes.dmp")
+
     args=parser.parse_args()
 
-    n_annotators = 0
     annotations = defaultdict(lambda: defaultdict(list))
+
     if args.inputfile:
         for inputfile in args.inputfile:
             # add all annotations into one dictionary
             annotations = parse_annotations(inputfile, annotations)
-            n_annotators += 1
 
     uniprot = parse_uniprot_single_xml(args.uniprot)
-    stats = inter_annotator(annotations, n_annotators, uniprot)
+    taxtree = parse_taxtree(args.taxonomy)
+    stats = inter_annotator(annotations, uniprot, taxtree)
     print_stats(stats)
 
 
