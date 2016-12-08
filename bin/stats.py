@@ -5,6 +5,9 @@ import Bio
 import shlex
 from subprocess import Popen, PIPE
 import os.path
+import ncbi_taxonomy.ncbi_taxonomy
+#import pprint
+#pprint.pprint(stats)
 
 ################################################################################
 # This code is written by Helen Cook, with contributions from ...
@@ -120,7 +123,7 @@ def blast(seq1, seq2):
     with open(tmp2, 'w') as f2:
         f2.write(seq2 + "\n")
 
-    command = "blastp -query " + tmp1 + " -subject " + tmp2 + " -outfmt '6 pident'"
+    command = "blastp -query " + tmp1 + " -subject " + tmp2 + " -outfmt '6 pident'"  # XXX check the match length
     process = Popen(shlex.split(command), stdout=PIPE)
     out, err = process.communicate()
     exit_code = process.wait()
@@ -148,48 +151,84 @@ def inter_annotator(annotations, uniprot, taxtree):
                     stats[user1][user2] = {}
                 if not document in stats[user1][user2]:
                     stats[user1][user2][document] = {}
-                    stats[user1][user2][document]['tp'] = 0
-                    stats[user1][user2][document]['fp'] = 0
-                    stats[user1][user2][document]['fn'] = 0
+                    stats[user1][user2][document]['proteins'] = {}
+                    stats[user1][user2][document]['species'] = {}
 
-                    stats[user1][user2][document]['n_tp'] = 0
-                    stats[user1][user2][document]['n_fp'] = 0
-                    stats[user1][user2][document]['n_fn'] = 0
+                    stats[user1][user2][document]['proteins']['tp'] = 0
+                    stats[user1][user2][document]['proteins']['fp'] = 0
+                    stats[user1][user2][document]['proteins']['fn'] = 0
+
+                    stats[user1][user2][document]['proteins']['n_tp'] = 0
+                    stats[user1][user2][document]['proteins']['n_fp'] = 0
+                    stats[user1][user2][document]['proteins']['n_fn'] = 0
+
+                    stats[user1][user2][document]['species']['tp'] = 0
+                    stats[user1][user2][document]['species']['fp'] = 0
+                    stats[user1][user2][document]['species']['fn'] = 0
+
+                    stats[user1][user2][document]['species']['n_tp'] = 0
+                    stats[user1][user2][document]['species']['n_fp'] = 0
+                    stats[user1][user2][document]['species']['n_fn'] = 0
 
                 for annot in annotations[document][user1]:
+                    if annot['annottype'] == "e_2":
+                        annottype = 'proteins'
+                    else:
+                        annottype = 'species'
+
                     match = same_boundaries(annot, annotations[document][user2])
                     if match:
-                        stats[user1][user2][document]['n_tp'] += 1
+                        stats[user1][user2][document][annottype]['n_tp'] += 1
 
                         if same_normalization(annot, match, uniprot, taxtree):
                             #print "agree " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end']
-                            stats[user1][user2][document]['tp'] += 1
+                            stats[user1][user2][document][annottype]['tp'] += 1
 
                         else:
                             #print "norm diff " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm'] + " " + match['norm']
-                            stats[user1][user2][document]['fp'] += 1
-                            stats[user1][user2][document]['fn'] += 1
+                            stats[user1][user2][document][annottype]['fp'] += 1
+                            stats[user1][user2][document][annottype]['fn'] += 1
 
                     else:
                         #print "no match for " + user1 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm']
-                        stats[user1][user2][document]['fp'] += 1
-                        stats[user1][user2][document]['n_fp'] += 1
+                        stats[user1][user2][document][annottype]['fp'] += 1
+                        stats[user1][user2][document][annottype]['n_fp'] += 1
 
-                stats[user1][user2][document]['fn'] += len(annotations[document][user2]) - stats[user1][user2][document]['tp'] - stats[user1][user2][document]['fn']
 
-                stats[user1][user2][document]['n_fn'] += len(annotations[document][user2]) - stats[user1][user2][document]['n_tp'] - stats[user1][user2][document]['n_fn']
+                for annottype in ['proteins', 'species']:
+                    stats[user1][user2][document][annottype]['fn'] += len(annotations[document][user2]) - stats[user1][user2][document][annottype]['tp'] - stats[user1][user2][document][annottype]['fn']
 
-                stats[user1][user2][document]['precision'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fp'] )
-                stats[user1][user2][document]['recall'] = float(stats[user1][user2][document]['tp']) / ( stats[user1][user2][document]['tp'] +  stats[user1][user2][document]['fn'] )
+                    stats[user1][user2][document][annottype]['n_fn'] += len(annotations[document][user2]) - stats[user1][user2][document][annottype]['n_tp'] - stats[user1][user2][document][annottype]['n_fn']
 
-                stats[user1][user2][document]['n_precision'] = float(stats[user1][user2][document]['n_tp']) / ( stats[user1][user2][document]['n_tp'] +  stats[user1][user2][document]['n_fp'] )
-                stats[user1][user2][document]['n_recall'] = float(stats[user1][user2][document]['n_tp']) / ( stats[user1][user2][document]['n_tp'] +  stats[user1][user2][document]['n_fn'] )
+                    stats[user1][user2][document][annottype]['precision'] = calc_precision(stats[user1][user2][document][annottype]['tp'], stats[user1][user2][document][annottype]['fp'])
+                    stats[user1][user2][document][annottype]['recall'] = calc_recall(stats[user1][user2][document][annottype]['tp'], stats[user1][user2][document][annottype]['fn'] )
+
+                    stats[user1][user2][document][annottype]['n_precision'] = calc_precision(stats[user1][user2][document][annottype]['n_tp'], stats[user1][user2][document][annottype]['n_fp'])
+                    stats[user1][user2][document][annottype]['n_recall'] = calc_recall(stats[user1][user2][document][annottype]['n_tp'], stats[user1][user2][document][annottype]['n_fn'])
 
     return stats;
 
 
+def calc_precision(tp, fp):
+    if tp + fp == 0:
+        if tp == 0:
+            return 0;
+        else:
+            return None
+    else:
+        return float(tp) / (tp + fp)
+
+def calc_recall(tp, fn):
+    if tp + fn == 0:
+        if tp == 0:
+            return 0
+        else:
+            return None
+    else:
+        return float(tp) / (tp + fn)
+
 def print_stats(stats):
-    print "user1\tuser2\tdocument\tprecision\trecall\tn_precision\tn_recall"
+    print "annottype\tuser1\tuser2\tdocument\tprecision\trecall\tn_precision\tn_recall"
     for user1 in stats:
         for user2 in stats[user1]:
             ac_tp = 0
@@ -201,32 +240,33 @@ def print_stats(stats):
             ac_n_fn = 0
 
             for document in stats[user1][user2]:
-                recall = stats[user1][user2][document]['recall']
-                precision = stats[user1][user2][document]['precision']
-                n_recall = stats[user1][user2][document]['n_recall']
-                n_precision = stats[user1][user2][document]['n_precision']
-                tp = stats[user1][user2][document]['tp']
-                fp = stats[user1][user2][document]['fp']
-                fn = stats[user1][user2][document]['fn']
-                ac_tp += tp
-                ac_fp += fp
-                ac_fn += fn
+                for annottype in stats[user1][user2][document]:
+                    recall = stats[user1][user2][document][annottype]['recall']
+                    precision = stats[user1][user2][document][annottype]['precision']
+                    n_recall = stats[user1][user2][document][annottype]['n_recall']
+                    n_precision = stats[user1][user2][document][annottype]['n_precision']
+                    tp = stats[user1][user2][document][annottype]['tp']
+                    fp = stats[user1][user2][document][annottype]['fp']
+                    fn = stats[user1][user2][document][annottype]['fn']
+                    ac_tp += tp
+                    ac_fp += fp
+                    ac_fn += fn
 
-                ac_n_tp += stats[user1][user2][document]['n_tp']
-                ac_n_fp += stats[user1][user2][document]['n_fp']
-                ac_n_fn += stats[user1][user2][document]['n_fn']
+                    ac_n_tp += stats[user1][user2][document][annottype]['n_tp']
+                    ac_n_fp += stats[user1][user2][document][annottype]['n_fp']
+                    ac_n_fn += stats[user1][user2][document][annottype]['n_fn']
 
-                fscore = 0
-                if precision + recall > 0:
-                    fscore = 2 * recall * precision / (precision + recall)
-                #print user1 + "\t" + user2 + "\t" + document + "\t" + str(tp) + "\t" + str(fp) + "\t" + str(fn) 
-                print user1 + "\t" + user2 + "\t" + document + "\t" + str(precision) + "\t" + str(recall) + "\t" + str(n_precision) + "\t" + str(n_recall) 
-            ac_precision = float(ac_tp) / ( ac_tp + ac_fp)
-            ac_recall = float(ac_tp) / ( ac_tp + ac_fn)
+                    fscore = 0
+                    if precision + recall > 0:
+                        fscore = 2 * recall * precision / (precision + recall)
+                    #print user1 + "\t" + user2 + "\t" + document + "\t" + str(tp) + "\t" + str(fp) + "\t" + str(fn) 
+                    print annottype + "\t" + user1 + "\t" + user2 + "\t" + document + "\t" + str(precision) + "\t" + str(recall) + "\t" + str(n_precision) + "\t" + str(n_recall) 
+                ac_precision = calc_precision(ac_tp, ac_fp)
+                ac_recall = calc_recall(ac_tp, ac_fn)
 
-            ac_n_precision = float(ac_n_tp) / ( ac_n_tp + ac_n_fp)
-            ac_n_recall = float(ac_n_tp) / ( ac_n_tp + ac_n_fn)
-            print "overall " + user1 + "\t" + user2 + "\t" + str(ac_precision) + "\t" + str(ac_recall) + "\t" + str(ac_n_precision) + "\t" + str(ac_n_recall)
+                ac_n_precision = calc_precision(ac_n_tp, ac_n_fp)
+                ac_n_recall = calc_recall(ac_n_tp, ac_n_fn)
+                print annottype + " overall " + user1 + "\t" + user2 + "\t" + str(ac_precision) + "\t" + str(ac_recall) + "\t" + str(ac_n_precision) + "\t" + str(ac_n_recall)
     return True
 
 
