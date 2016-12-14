@@ -10,19 +10,20 @@ from stats import *
 
 testcases = [
     # test name, document, recall, precision, n_recall, n_precision
-    ["proteins", "same_bound_same_norm", "100", 1, 1, 1, 1],
-    ["proteins", "diff_bound_same_norm", "101", 0, 0, 0, 0],
-    ["proteins", "same_bound_diff_norm", "102", 0, 0, 1, 1],
+    #["proteins", "same_bound_same_norm", "100", 1, 1, 1, 1],
+    #["proteins", "diff_bound_same_norm", "101", 0, 0, 0, 0],
+    #["proteins", "same_bound_diff_norm", "102", 0, 0, 1, 1],
     #["proteins", "only_in_one", "103", 0, 0, 0, 0],
-    ["proteins", "diff_bound_diff_norm", "104", 0, 0, 0, 0],
+    #["proteins", "diff_bound_diff_norm", "104", 0, 0, 0, 0],
     ["proteins", "same_bound_similar_norm", "105", 1, 1, 1, 1],
+    ["proteins", "same_bound_similar_norm2", "106", 1, 1, 1, 1],
 
-    ["species", "same_bound_same_norm", "3388767", 1, 1, 1, 1],
-    ["species", "diff_bound_same_norm", "3388768", 0, 0, 0, 0],
-    ["species", "same_bound_diff_norm", "3388769", 0, 0, 1, 1],
+    #["species", "same_bound_same_norm", "3388767", 1, 1, 1, 1],
+    #["species", "diff_bound_same_norm", "3388768", 0, 0, 0, 0],
+    #["species", "same_bound_diff_norm", "3388769", 0, 0, 1, 1],
     #["species", "only_in_one", "3388770", 0, 0, 0, 0],
-    ["species", "diff_bound_diff_norm", "3388771", 0, 0, 0, 0],
-    ["species", "same_bound_similar_norm", "3388772", 1, 1, 1, 1],
+    #["species", "diff_bound_diff_norm", "3388771", 0, 0, 0, 0],
+    #["species", "same_bound_similar_norm", "3388772", 1, 1, 1, 1],
 
 ]
 

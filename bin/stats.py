@@ -6,8 +6,8 @@ import shlex
 from subprocess import Popen, PIPE
 import os.path
 import ncbi_taxonomy.ncbi_taxonomy
-#import pprint
-#pprint.pprint(stats)
+import pprint
+import numpy as np
 
 ################################################################################
 # This code is written by Helen Cook, with contributions from ...
@@ -20,6 +20,8 @@ def get_user_from_inputfile(inputfile):
     if field[1] == "test2":
         return "Helen"
     user = field[1].split("-")
+    if user[0] == "Kerstin":
+        return "Cristina"
     return user[0]
 
 def parse_annotations(inputfile, annotations):
@@ -34,51 +36,35 @@ def parse_annotations(inputfile, annotations):
                     annot = {'text': text, 'norm': normid, 'start': start, 'end': end, 'user': user, 'docid': docid, 'annottype': annottype}
                     annotations[docid][user].append(annot)
     return annotations
+
+def convert_annottype(annottype):
+    if int(annottype) == -2 or int(annottype) == -3:
+        return "e_1" # species
+    else:
+        return "e_2" # protein
     
-# def parse_tagger_output(tagger_output_file, entities_file, annotations):
-# 	#Parse the tagger output file and also include the x_entities entries
-	
-# 	input_tag = open(tagger_output_file, "r")
-# 	input_ent = open(entities_file, "r")
-# 	tag_dat = input_tag.readlines()
-# 	ent_dat = input_ent.readlines()
-# 	input_tag.close()
-# 	input_ent.close()
+def parse_tagger(tagger_output_file, entities_file, annotations):
+    #Parse the tagger output file and also include the x_entities entries
 
-# 	tag_array = np.chararray([len(tag_dat), 9], itemsize = 20) #Added an extra column for normids addition
-# 	ent_array = np.chararray([len(ent_dat), 3], itemsize = 20)
+    entities = {}
+    with open(entities_file, "r") as f:
+        for line in f:
+            (serialno, annottype, norm) = line.rstrip("\n").split("\t")
+            entities[serialno] = [annottype, norm]
+            if serialno == 10531173 or serialno == 10531174:
+                print "serialno: " + serialno + " " + annottype + " " + norm
+                print stop
 
-# 	#Make and array for tagger data
-# 	for n, tag in enumerate(tag_dat):
-# 		col_tag = tag.rstrip("\n").split("\t")
-# 		for i in range(len(col_tag)):
-# 			tag_array[n][i] = str(col_tag[i])
-
-# 	#Make an array for entities data
-# 	for n, ent in enumerate(ent_dat):
-# 		col_ent = ent.rstrip("\n").split("\t")
-# 		for i in range(len(col_ent)):
-# 			ent_array[n][i] = str(col_ent[i])
-
-
-# 	#Match the entities normalized names with tagger data
-# 	tag_inds = tag_array[:,7]
-# 	for entry in ent_array:
-# 		inds = np.where(tag_inds == entry[0])
-# 		if np.shape(inds) != (1L,0L):
-# 			for num_list in inds:
-# 				for i in num_list:
-# 					tag_array[i][8] = entry[2]
-					
-# 	#Add tag_array to the annotations dict
-# 	user = 'tagger' #For identification from other users.
-# 	text = 'foobar' #Placeholder
-# 	for entry in tag_array:
-# 		(docid, unused, unused2, start, end, annot, taxid, serialno, normid) = entry
-# 		annot = {'text': text, 'norm': normid, 'start': start, 'end': end, 'user': user, 'docid': docid}
-# 		annotations[docid][user].append(annot)
-
-# 	return annotations
+    user = 'tagger' #For identification from other users.
+    with open(tagger_output_file, "r") as f:
+        for line in f:
+            (docid, unused, unused2, start, end, annot, taxid, serialno) = line.rstrip("\n").split("\t")
+            (annottype, normid) = entities[serialno]
+            annottype = convert_annottype(annottype)
+            annot = {'text': annot, 'norm': normid, 'start': start, 'end': str(int(end)+1), 'user': user, 'docid': docid, 'annottype': annottype}
+            annotations[docid][user].append(annot)
+                    
+    return annotations
 
 def same_boundaries(annot, annot_list):
     # check whether an annotation with the same boundaries as annot exists on the annot_list
@@ -98,6 +84,7 @@ def same_normalization(annot, an, uniprot, taxtree):
         if an['annottype'] == "e_2":
             # for proteins, check that they are close enough to each other
             if an['norm'] in uniprot and annot['norm'] in uniprot:
+                #print an['norm'] + " " + annot['norm']
                 if blast(uniprot[an['norm']]['sequence'], uniprot[annot['norm']]['sequence']):
                     return True
             else:
@@ -131,11 +118,16 @@ def blast(seq1, seq2):
     if out:
         o = out.split("\n")
         out = o[0]
+        #print "pident " + str(out)
         if float(out) > 90:
             return True
         return False
     return False
 
+def write_results(phase, user1, user2, document, annottype, annot):
+    outfile = "results." + phase + "." + annottype
+    with open(outfile, 'a') as f:
+        f.write(document + "\t" + user1 + "\t" + user2 + "\t" + annot['text'] + "\t" + annot['norm'] + "\t" + annot['start'] + "\t" + annot['end'] + "\n")
 
 def inter_annotator(annotations, uniprot, taxtree):
     # Print interannotator agreement for all documens 
@@ -184,21 +176,25 @@ def inter_annotator(annotations, uniprot, taxtree):
                             #print "agree " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end']
                             stats[user1][user2][document][annottype]['tp'] += 1
 
+                            write_results("tp", user1, user2, document, annottype, annot)
+
                         else:
                             #print "norm diff " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm'] + " " + match['norm']
                             stats[user1][user2][document][annottype]['fp'] += 1
                             stats[user1][user2][document][annottype]['fn'] += 1
+                            write_results("wrongnorm", user1, user2, document, annottype, annot)
 
                     else:
                         #print "no match for " + user1 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm']
                         stats[user1][user2][document][annottype]['fp'] += 1
                         stats[user1][user2][document][annottype]['n_fp'] += 1
+                        write_results("wrongboundaries", user1, user2, document, annottype, annot)
 
 
                 for annottype in ['proteins', 'species']:
-                    stats[user1][user2][document][annottype]['fn'] += len(annotations[document][user2]) - stats[user1][user2][document][annottype]['tp'] - stats[user1][user2][document][annottype]['fn']
+                    stats[user1][user2][document][annottype]['fn'] += get_count(annotations[document][user2], annottype) - stats[user1][user2][document][annottype]['tp'] - stats[user1][user2][document][annottype]['fn']
 
-                    stats[user1][user2][document][annottype]['n_fn'] += len(annotations[document][user2]) - stats[user1][user2][document][annottype]['n_tp'] - stats[user1][user2][document][annottype]['n_fn']
+                    stats[user1][user2][document][annottype]['n_fn'] += get_count(annotations[document][user2], annottype) - stats[user1][user2][document][annottype]['n_tp'] - stats[user1][user2][document][annottype]['n_fn']
 
                     stats[user1][user2][document][annottype]['precision'] = calc_precision(stats[user1][user2][document][annottype]['tp'], stats[user1][user2][document][annottype]['fp'])
                     stats[user1][user2][document][annottype]['recall'] = calc_recall(stats[user1][user2][document][annottype]['tp'], stats[user1][user2][document][annottype]['fn'] )
@@ -206,41 +202,54 @@ def inter_annotator(annotations, uniprot, taxtree):
                     stats[user1][user2][document][annottype]['n_precision'] = calc_precision(stats[user1][user2][document][annottype]['n_tp'], stats[user1][user2][document][annottype]['n_fp'])
                     stats[user1][user2][document][annottype]['n_recall'] = calc_recall(stats[user1][user2][document][annottype]['n_tp'], stats[user1][user2][document][annottype]['n_fn'])
 
+    #pprint.pprint(stats)
     return stats;
 
+def get_count(annot, annottype):
+    if annottype == "proteins":
+        annottype = "e_2"
+    if annottype == "species":
+        annottype = "e_1"
+    count = 0
+    for a in annot:
+        if a['annottype'] == annottype:
+            count += 1
+    return count
 
 def calc_precision(tp, fp):
     if tp + fp == 0:
-        if tp == 0:
-            return 0;
-        else:
-            return None
+        return 0;
     else:
         return float(tp) / (tp + fp)
 
 def calc_recall(tp, fn):
     if tp + fn == 0:
-        if tp == 0:
-            return 0
-        else:
-            return None
+        return 0
     else:
         return float(tp) / (tp + fn)
 
+def calc_fscore(r, p):
+    if r+p == 0:
+        return 0
+    else:
+        return 2*r*p / (r+p)
+
 def print_stats(stats):
-    print "annottype\tuser1\tuser2\tdocument\tprecision\trecall\tn_precision\tn_recall"
+    #print "annottype\tuser1\tuser2\tdocument\tprecision\trecall\tn_precision\tn_recall"
+    print "annottype\tuser1\tuser2\tdocument\tf score\t unnorm f score"
     for user1 in stats:
         for user2 in stats[user1]:
-            ac_tp = 0
-            ac_fp = 0
-            ac_fn = 0
+            
+            for annottype in ['proteins', 'species']:
+                ac_tp = 0
+                ac_fp = 0
+                ac_fn = 0
 
-            ac_n_tp = 0
-            ac_n_fp = 0
-            ac_n_fn = 0
+                ac_n_tp = 0
+                ac_n_fp = 0
+                ac_n_fn = 0
 
-            for document in stats[user1][user2]:
-                for annottype in stats[user1][user2][document]:
+                for document in stats[user1][user2]:
                     recall = stats[user1][user2][document][annottype]['recall']
                     precision = stats[user1][user2][document][annottype]['precision']
                     n_recall = stats[user1][user2][document][annottype]['n_recall']
@@ -257,16 +266,23 @@ def print_stats(stats):
                     ac_n_fn += stats[user1][user2][document][annottype]['n_fn']
 
                     fscore = 0
+                    n_fscore = 0
                     if precision + recall > 0:
                         fscore = 2 * recall * precision / (precision + recall)
+                        n_fscore = 2 * n_recall * n_precision / (n_precision + n_recall)
                     #print user1 + "\t" + user2 + "\t" + document + "\t" + str(tp) + "\t" + str(fp) + "\t" + str(fn) 
-                    print annottype + "\t" + user1 + "\t" + user2 + "\t" + document + "\t" + str(precision) + "\t" + str(recall) + "\t" + str(n_precision) + "\t" + str(n_recall) 
+                    #print annottype + "\t" + user1 + "\t" + user2 + "\t" + document + "\t" + str(fscore) + "\t" + str(n_fscore)
+
                 ac_precision = calc_precision(ac_tp, ac_fp)
                 ac_recall = calc_recall(ac_tp, ac_fn)
+                ac_fscore = calc_fscore(ac_recall, ac_precision)
 
                 ac_n_precision = calc_precision(ac_n_tp, ac_n_fp)
                 ac_n_recall = calc_recall(ac_n_tp, ac_n_fn)
-                print annottype + " overall " + user1 + "\t" + user2 + "\t" + str(ac_precision) + "\t" + str(ac_recall) + "\t" + str(ac_n_precision) + "\t" + str(ac_n_recall)
+                ac_n_fscore = calc_fscore(ac_n_recall, ac_n_precision)
+
+                #print annottype + " overall " + user1 + "\t" + user2 + "\t" + str(ac_precision) + "\t" + str(ac_recall) + "\t" + str(ac_n_precision) + "\t" + str(ac_n_recall)
+                print annottype + "\toverall\t" + user1 + "\t" + user2 + "\t" + str(ac_fscore) + "\t" + str(ac_n_fscore)
     return True
 
 
@@ -523,6 +539,16 @@ def main():
                 dest='taxonomy',
                 help="ncbi taxonomy nodes.dmp")
 
+    parser.add_argument('-o', '--output',
+                required=False,
+                dest='output',
+                help="tagger output")
+    
+    parser.add_argument('-e', '--entities',
+                required=False,
+                dest='entities',
+                help="entities file for textmining")
+
     args=parser.parse_args()
 
     annotations = defaultdict(lambda: defaultdict(list))
@@ -531,6 +557,9 @@ def main():
         for inputfile in args.inputfile:
             # add all annotations into one dictionary
             annotations = parse_annotations(inputfile, annotations)
+
+    if args.output and args.entities:
+        annotations = parse_tagger(args.output, args.entities, annotations)
 
     uniprot = parse_uniprot_single_xml(args.uniprot)
     taxtree = parse_taxtree(args.taxonomy)
