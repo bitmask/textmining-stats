@@ -71,6 +71,20 @@ def same_boundaries(annot, annot_list):
     for an in annot_list:
         if an['end'] == annot['end'] and an['start'] == annot['start']:
             return an
+        # allow fuzzy boundaries, but insist that one matches
+        if an['end'] == annot['end'] or an['start'] == annot['start']:
+            return an
+        # allow any overlap
+        if int(an['start']) < int(annot['start']) < int(an['end']) < int(annot['end']):
+            return an
+        if int(annot['start']) < int(an['start']) < int(annot['end']) < int(an['end']):
+            return an
+        # subset
+        if int(annot['start']) < int(an['start']) < int(an['end']) < int(annot['end']):
+            return an
+        # superset
+        if int(an['start']) < int(annot['start']) < int(annot['end']) < int(an['end']):
+            return an
     return None
 
 
@@ -78,10 +92,10 @@ def same_normalization(annot, an, uniprot, taxtree):
     if an['norm'] == annot['norm']:
         return True
     else:
-        if annot['norm'] == '???' or an['norm'] == '???' or annot['norm'] == 'UNKN' or an['norm'] == 'UNKN':
+        if annot['norm'] == '???' or an['norm'] == '???' or annot['norm'] == 'UNKN' or an['norm'] == 'UNKN' or annot['norm'] == "INVALID_ID" or an['norm'] == "INVALID_ID":
             # if a normalization was not entered by the user, then say they are not the same
             return False
-        if an['annottype'] == "e_2":
+        if an['annottype'] == "e_2" and annot['annottype'] == "e_2":
             # for proteins, check that they are close enough to each other
             if an['norm'] in uniprot and annot['norm'] in uniprot:
                 #print an['norm'] + " " + annot['norm']
@@ -89,12 +103,15 @@ def same_normalization(annot, an, uniprot, taxtree):
                     return True
             else:
                 return False
-        elif an['annottype'] == "e_1":
+        elif an['annottype'] == "e_1" and annot['annottype'] == "e_1":
             # for species, check that they are nearby in the tree
-            if int(an['norm']) in climb_tax_tree(int(annot['norm']), taxtree) or int(annot['norm']) in climb_tax_tree(int(an['norm']), taxtree):
-                return True
-            else:
-                return False
+            try:
+                if int(an['norm']) in climb_tax_tree(int(annot['norm']), taxtree) or int(annot['norm']) in climb_tax_tree(int(an['norm']), taxtree):
+                    return True
+                else:
+                    return False
+            except:
+                return False # if someone has put a protein id where a taxid should go ??
     return False
 
 
