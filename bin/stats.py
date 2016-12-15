@@ -8,6 +8,7 @@ import os.path
 import ncbi_taxonomy.ncbi_taxonomy
 import pprint
 import numpy as np
+import glob
 
 ################################################################################
 # This code is written by Helen Cook, with contributions from ...
@@ -24,6 +25,72 @@ def get_user_from_inputfile(inputfile):
         return "Cristina"
     return user[0]
 
+def parse_tagtog_document(pmid, path):
+    # get the number of characters in the first paragraph -- this is the offset to add to the coords in the second paragraph to make global coords
+    document = ""
+    for docfile in glob.glob(path + "/doc.*-" + pmid + '.txt'):
+        # should only be one file
+        with open(docfile, "r") as f:
+            for line in f:
+                document += line
+                # is already missing the newline
+    # split on abstract separator
+    p = document.split("Abstract")
+    if len(p) == 1:
+        return (p[0], "") # document may be title only
+   
+    # omg
+    paragraphs = []
+    paragraphs.append(p[0]) # add the title
+    remaining_text = str("Abstract" + p[1])
+
+    if 'BACKGROUND' in remaining_text:
+        q = remaining_text.split("BACKGROUND")
+        remaining_text = q[0] + "BACKGROUND" + q[1]
+    if 'RESULTS' in remaining_text:
+        q = remaining_text.split("RESULTS")
+        paragraphs.append(q[0])
+        remaining_text = "RESULTS" + q[1]
+    if 'CONCLUSION' in remaining_text:
+        if 'CONCLUSIONS' in remaining_text:
+            q = remaining_text.split("CONCLUSIONS")
+            paragraphs.append(q[0])
+            remaining_text = "CONCLUSIONS" + q[1]
+        else:
+            q = remaining_text.split("CONCLUSION")
+            paragraphs.append(q[0])
+            remaining_text = "CONCLUSION" + q[1]
+    if 'UNLABELLED' in remaining_text:
+        q = remaining_text.split("UNLABELLED")
+        remaining_text = q[0] + "UNLABELLED" + q[1]
+    if 'IMPORTANCE' in remaining_text:
+        q = remaining_text.split("IMPORTANCE")
+        paragraphs.append(q[0])
+        remaining_text = "IMPORTANCE" + q[1]
+
+    paragraphs.append(remaining_text)
+    return paragraphs
+
+def get_position_offset(pmid, para_name, path):
+    if para_name == "s1h1":
+        return 0
+
+    paragraphs = parse_tagtog_document(pmid, path)
+
+    if len(paragraphs) == 2:
+        return len(paragraphs[0])
+
+    else:
+        r = re.compile('s2s(.)p1')
+        which = r.findall(para_name)[0] # this is the index of the paragraph the match is in
+
+        idx = 0
+        offset = 0
+        while(idx < int(which)):
+            offset += len(paragraphs[idx]) # add up the lengths of all preceeding paragraphs
+            idx += 1
+        return offset
+
 def parse_annotations(inputfile, annotations):
     # Input format is one annotation per line
     user = get_user_from_inputfile(inputfile)
@@ -31,10 +98,14 @@ def parse_annotations(inputfile, annotations):
         for line in f:
             cols = line.rstrip("\n").split("\t")
             if len(cols) > 5:
-                (annotid, doctype, docid, annottype, annotdict, normid, blank, userX, unused, text, unused2, start, end) = cols
+                (annotid, doctype, pmid, annottype, annotdict, normid, blank, userX, unused, text, para_name, start, end) = cols
                 if annotdict == "NCBITax" or annotdict == "Uniprot":
-                    annot = {'text': text, 'norm': normid, 'start': start, 'end': end, 'user': user, 'docid': docid, 'annottype': annottype}
-                    annotations[docid][user].append(annot)
+                    path = os.path.dirname(inputfile)
+                    offset = get_position_offset(pmid, para_name, path)
+                    #print "offset " + str(offset) + " for " + para_name + " " + start + " " + end + " " + text
+
+                    annot = {'text': text, 'norm': normid, 'start': str(int(start) + offset), 'end': str(int(end) + offset), 'user': user, 'pmid': pmid, 'annottype': annottype}
+                    annotations[pmid][user].append(annot)
     return annotations
 
 def convert_annottype(annottype):
@@ -51,18 +122,15 @@ def parse_tagger(tagger_output_file, entities_file, annotations):
         for line in f:
             (serialno, annottype, norm) = line.rstrip("\n").split("\t")
             entities[serialno] = [annottype, norm]
-            if serialno == 10531173 or serialno == 10531174:
-                print "serialno: " + serialno + " " + annottype + " " + norm
-                print stop
 
     user = 'tagger' #For identification from other users.
     with open(tagger_output_file, "r") as f:
         for line in f:
-            (docid, unused, unused2, start, end, annot, taxid, serialno) = line.rstrip("\n").split("\t")
+            (pmid, unused, unused2, start, end, annot, taxid, serialno) = line.rstrip("\n").split("\t")
             (annottype, normid) = entities[serialno]
             annottype = convert_annottype(annottype)
-            annot = {'text': annot, 'norm': normid, 'start': start, 'end': str(int(end)+1), 'user': user, 'docid': docid, 'annottype': annottype}
-            annotations[docid][user].append(annot)
+            annot = {'text': annot, 'norm': normid, 'start': start, 'end': str(int(end)+1), 'user': user, 'pmid': pmid, 'annottype': annottype}
+            annotations[pmid][user].append(annot)
                     
     return annotations
 
