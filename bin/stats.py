@@ -5,16 +5,29 @@ import Bio
 import shlex
 from subprocess import Popen, PIPE
 import os.path
-import ncbi_taxonomy.ncbi_taxonomy
+import ncbi_taxonomy.ncbi_taxonomy as tax
 import pprint
 import numpy as np
 import glob
+import json
+
+
+# RUN WITH Python 2.0 or fix '' == u'' comparisons of strings to unicode strings
 
 ################################################################################
 # This code is written by Helen Cook, with contributions from ...
 # 
 # Distributed under the BSD license. 
 ################################################################################
+
+def parse_corpus(inputfile):
+    corpus = {}
+    with open(inputfile, "r") as f:
+        for line in f:
+            pmid, author, journal, year, text = line.rstrip("\n").split("\t")
+            pmid = pmid.lstrip("PMID:")
+            corpus[pmid] = text
+    return corpus
 
 def get_user_from_inputfile(inputfile):
     field = os.path.basename(inputfile).split(".")
@@ -35,38 +48,40 @@ def parse_tagtog_document(pmid, path):
                 document += line
                 # is already missing the newline
     # split on abstract separator
-    p = document.split("Abstract")
+    p = document.split("Abstract ")
     if len(p) == 1:
         return (p[0], "") # document may be title only
    
     # omg
     paragraphs = []
-    paragraphs.append(p[0]) # add the title
-    remaining_text = str("Abstract" + p[1])
+    paragraphs.append(p[0] + "Abstract ") # add the title
+    remaining_text = p[1]
 
     if 'BACKGROUND' in remaining_text:
-        q = remaining_text.split("BACKGROUND")
-        remaining_text = q[0] + "BACKGROUND" + q[1]
+        q = remaining_text.split("BACKGROUND ")
+        remaining_text = q[1]
+        paragraphs[-1] = paragraphs[-1] + "BACKGROUND " # update the title block to include this header
     if 'RESULTS' in remaining_text:
-        q = remaining_text.split("RESULTS")
-        paragraphs.append(q[0])
-        remaining_text = "RESULTS" + q[1]
+        q = remaining_text.split("RESULTS ")
+        paragraphs.append(q[0] + "RESULTS ")
+        remaining_text = q[1]
     if 'CONCLUSION' in remaining_text:
         if 'CONCLUSIONS' in remaining_text:
-            q = remaining_text.split("CONCLUSIONS")
-            paragraphs.append(q[0])
-            remaining_text = "CONCLUSIONS" + q[1]
+            q = remaining_text.split("CONCLUSIONS ")
+            paragraphs.append(q[0] + "CONCLUSIONS ")
+            remaining_text = q[1]
         else:
-            q = remaining_text.split("CONCLUSION")
-            paragraphs.append(q[0])
-            remaining_text = "CONCLUSION" + q[1]
+            q = remaining_text.split("CONCLUSION ")
+            paragraphs.append(q[0] + "CONCLUSION ")
+            remaining_text = q[1]
     if 'UNLABELLED' in remaining_text:
-        q = remaining_text.split("UNLABELLED")
-        remaining_text = q[0] + "UNLABELLED" + q[1]
+        q = remaining_text.split("UNLABELLED ")
+        remaining_text = q[1]
+        paragraphs[-1] = paragraphs[-1] + "UNLABELLED "
     if 'IMPORTANCE' in remaining_text:
-        q = remaining_text.split("IMPORTANCE")
-        paragraphs.append(q[0])
-        remaining_text = "IMPORTANCE" + q[1]
+        q = remaining_text.split("IMPORTANCE ")
+        paragraphs.append(q[0] + "IMPORTANCE ")
+        remaining_text = q[1]
 
     paragraphs.append(remaining_text)
     return paragraphs
@@ -91,6 +106,52 @@ def get_position_offset(pmid, para_name, path):
             idx += 1
         return offset
 
+def update_deprecated_taxids(taxid):
+    # polyoma viruses were reclassified after tagging started, and old entries aren't in nodes.dmp
+    if taxid == '10633':
+        return '1891767'
+    if taxid == '10624':
+        return '36362'
+    if taxid == '10634':
+        return '1891730'
+    if taxid == '10629':
+        return '1891762'
+    return taxid
+
+def parse_annotations_json(inputfile, annotations):
+    user=get_user_from_inputfile(inputfile)
+    path = os.path.dirname(inputfile)
+    with open(inputfile) as f:
+        data = json.load(f)
+
+        pmid = data['sources'][0]['id']
+        
+        for an in data['entities']:
+            annottype = an['classId']
+            text = an['offsets'][0]['text'] # TODO index?
+
+            normid = "???"
+            for k,n in an['normalizations'].iteritems():
+                normid = n['source']['id']
+
+            norms = re.compile(", ?").split(normid)
+            for normid in norms:
+
+                normid = update_deprecated_taxids(normid)
+
+                para_name = an['part']
+                offset = get_position_offset(pmid, para_name, path)
+                start = an['offsets'][0]['start']
+                end = int(start) + len(text) # TODO off by n?
+
+                
+                annot = {'text': text, 'norm': normid, 'start': str(int(start) + offset), 'end': str(int(end) + offset), 'user': user, 'pmid': pmid, 'annottype': annottype}
+                annotations[pmid][user].append(annot)
+    return annotations
+
+        
+
+
 def parse_annotations(inputfile, annotations):
     # Input format is one annotation per line
     user = get_user_from_inputfile(inputfile)
@@ -103,6 +164,9 @@ def parse_annotations(inputfile, annotations):
                     path = os.path.dirname(inputfile)
                     offset = get_position_offset(pmid, para_name, path)
                     #print "offset " + str(offset) + " for " + para_name + " " + start + " " + end + " " + text
+                    
+                    # fix deprecated ncbi tax entries
+                    normid = update_deprecated_taxids(normid)
 
                     annot = {'text': text, 'norm': normid, 'start': str(int(start) + offset), 'end': str(int(end) + offset), 'user': user, 'pmid': pmid, 'annottype': annottype}
                     annotations[pmid][user].append(annot)
@@ -116,7 +180,6 @@ def convert_annottype(annottype):
     
 def parse_tagger(tagger_output_file, entities_file, annotations):
     #Parse the tagger output file and also include the x_entities entries
-
     entities = {}
     with open(entities_file, "r") as f:
         for line in f:
@@ -129,32 +192,68 @@ def parse_tagger(tagger_output_file, entities_file, annotations):
             (pmid, unused, unused2, start, end, annot, taxid, serialno) = line.rstrip("\n").split("\t")
             (annottype, normid) = entities[serialno]
             annottype = convert_annottype(annottype)
+
+            # fix deprecated ncbi tax entries
+            normid = update_deprecated_taxids(normid)
+
             annot = {'text': annot, 'norm': normid, 'start': start, 'end': str(int(end)+1), 'user': user, 'pmid': pmid, 'annottype': annottype}
             annotations[pmid][user].append(annot)
                     
     return annotations
 
+def convert_tagger_bytes_to_char(annotations, corpus):
+    for document in annotations:
+        for user in annotations[document]:
+            if user == "tagger":
+                mapping = get_b2c_mapping(corpus[document])
+                converted_annotations = []
+                for annot in annotations[document][user]:
+                    annot['start'] = str(mapping[int(annot['start'])] + 1)
+                    annot['end'] = str(mapping[int(annot['end'])] + 1)
+                    converted_annotations.append(annot)
+                annotations[document][user] = converted_annotations
+    return annotations
+
+def get_b2c_mapping(document):
+    # get byte to character mapping for document
+    u_results = []
+    # for each byte in the document, determine if it belongs to a multi byte character
+    mapping = {} # byte to char
+    byte = 0
+    character = 0
+    u_document = document.decode("utf-8") # turn bytes into characters
+    for b in u_document:
+        u = b.encode('utf-8') # back to bytes
+        char_bytes = len(u) # how many bytes does this character consist of
+        for i in range(0, char_bytes):
+            mapping[byte+i] = character
+        byte += char_bytes
+        character += 1  
+    return mapping
+
 def same_boundaries(annot, annot_list):
-    # check whether an annotation with the same boundaries as annot exists on the annot_list
+    # check whether any annotations with the same boundaries as annot exists on the annot_list
+    returnlist = []
     for an in annot_list:
         if an['end'] == annot['end'] and an['start'] == annot['start']:
-            return an
+            returnlist.append(an)
         # allow fuzzy boundaries, but insist that one matches
-        if an['end'] == annot['end'] or an['start'] == annot['start']:
-            return an
+        elif an['end'] == annot['end']:
+            returnlist.append(an)
+        elif an['start'] == annot['start']:
+            returnlist.append(an)
         # allow any overlap
-        if int(an['start']) < int(annot['start']) < int(an['end']) < int(annot['end']):
-            return an
-        if int(annot['start']) < int(an['start']) < int(annot['end']) < int(an['end']):
-            return an
+        elif int(an['start']) < int(annot['start']) < int(an['end']) < int(annot['end']):
+            returnlist.append(an)
+        elif int(annot['start']) < int(an['start']) < int(annot['end']) < int(an['end']):
+            returnlist.append(an)
         # subset
-        if int(annot['start']) < int(an['start']) < int(an['end']) < int(annot['end']):
-            return an
+        elif int(annot['start']) < int(an['start']) < int(an['end']) < int(annot['end']):
+            returnlist.append(an)
         # superset
-        if int(an['start']) < int(annot['start']) < int(annot['end']) < int(an['end']):
-            return an
-    return None
-
+        elif int(an['start']) < int(annot['start']) < int(annot['end']) < int(an['end']):
+            returnlist.append(an)
+    return returnlist
 
 def same_normalization(annot, an, uniprot, taxtree):
     if an['norm'] == annot['norm']:
@@ -165,25 +264,33 @@ def same_normalization(annot, an, uniprot, taxtree):
             return False
         if an['annottype'] == "e_2" and annot['annottype'] == "e_2":
             # for proteins, check that they are close enough to each other
+            #if multiproteins, check all
             if an['norm'] in uniprot and annot['norm'] in uniprot:
                 #print an['norm'] + " " + annot['norm']
-                if blast(uniprot[an['norm']]['sequence'], uniprot[annot['norm']]['sequence']):
+                if blast(uniprot[an['norm']]['sequence'], uniprot[annot['norm']]['sequence'], 90):
                     return True
             else:
+                #print "not in uniprot " + an['norm'] + " or " + annot['norm'] + " " + an['pmid']
                 return False
         elif an['annottype'] == "e_1" and annot['annottype'] == "e_1":
             # for species, check that they are nearby in the tree
             try:
-                if int(an['norm']) in climb_tax_tree(int(annot['norm']), taxtree) or int(annot['norm']) in climb_tax_tree(int(an['norm']), taxtree):
+                tree1 = tax.climb_tax_tree(int(annot['norm']), taxtree)
+                tree2 = tax.climb_tax_tree(int(an['norm']), taxtree)
+                if int(an['norm']) in tree1 or int(annot['norm']) in tree2:
                     return True
                 else:
-                    return False
+                    if 10509 in tree1 and 10509 in tree2:
+                        # exception for Adenovirus
+                        return True
+                    else:
+                        return False
             except:
                 return False # if someone has put a protein id where a taxid should go ??
     return False
 
 
-def blast(seq1, seq2):
+def blast(seq1, seq2, pident):
     # run blast on these sequences and if they have above 90% identity on 90% of the sequence, then consider them to be the same
     tmpdir = "/tmp"
 
@@ -204,7 +311,7 @@ def blast(seq1, seq2):
         o = out.split("\n")
         out = o[0]
         #print "pident " + str(out)
-        if float(out) > 90:
+        if float(out) > pident:
             return True
         return False
     return False
@@ -212,7 +319,172 @@ def blast(seq1, seq2):
 def write_results(phase, user1, user2, document, annottype, annot):
     outfile = "results." + phase + "." + annottype
     with open(outfile, 'a') as f:
-        f.write(document + "\t" + user1 + "\t" + user2 + "\t" + annot['text'] + "\t" + annot['norm'] + "\t" + annot['start'] + "\t" + annot['end'] + "\n")
+        f.write(document.encode('utf-8') + "\t")
+        f.write(user1 + "\t")
+        f.write(user2 + "\t")
+        f.write(annot['text'].encode('utf-8') + "\t")
+        f.write(annot['norm'].encode('utf-8') + "\t")
+        f.write(annot['start'] + "\t")
+        f.write(annot['end'] + "\n")
+
+def report_to_user(a):
+    report_file = "results.report"
+    with open(report_file, "a") as f:
+        f.write(a['user'] + "\t")
+        f.write(str(a['pmid']) + "\t")
+        f.write(a['text'].encode('utf-8') + "\t")
+        f.write(a['start'] + "\t")
+        f.write(a['end'] + "\t")
+        f.write(a['norm'] + "\t")
+        f.write(a['annottype'] + "\n")
+
+def filter_annotations(annotations, taxtree, taxlevel):
+    # remove annotations to things at a higher tax level than species
+    # and check that annotations are well formed
+    for document in annotations.keys():
+        for user1 in annotations[document].keys():
+            clean_annotations = []
+            for a in annotations[document][user1]:
+
+                if a['annottype'] == "e_1":
+                    if a['norm'] == '???' or a['norm'] == 'UNKN' or a['norm'] == "INVALID_ID" or a['norm'] == '0':
+                        # add without checking
+                        clean_annotations.append(a)
+                        report_to_user(a)
+                    else:
+
+                        # there should not actually be any multinorms at this point
+                        norms = re.compile(", ?").split(a['norm'])
+                        add = []
+                        for n in norms:
+                            try:
+                                int(n)
+                            except:
+                                n = 0
+                                report_to_user(a)
+                            if n:
+                                t = taxlevel[int(n)].lower()
+                                if t == "genus" or t == "subfamily" or t == "family" or t == "order":
+                                    pass
+                                else:
+                                    add.append(str(n))
+
+                        if add:
+                            add.sort()
+                            a['norm'] = ",".join(add)
+                            clean_annotations.append(a)
+
+                else: 
+                    # add all the proteins
+                    clean_annotations.append(a)
+
+                    # but report problems for some of them
+                    is_int = True
+                    try:
+                        int(a['norm'])
+                    except:
+                        is_int = False
+                    if is_int:
+                        report_to_user(a)
+
+                    norms = re.compile(", ?").split(a['norm'])
+                    a['norm'] = ",".join(norms)
+
+                    if a['norm'] == '???' or a['norm'] == 'UNKN' or a['norm'] == "INVALID_ID" or a['norm'] == '0':
+                        report_to_user(a)
+
+            annotations[document][user1] = clean_annotations
+    return annotations
+
+def get_positions(annot):
+    positions = defaultdict(lambda: [])
+    for user in annot.keys():
+        for an in annot[user]:
+            start = an['start']
+            if not start in positions:
+                positions[start] = []
+            positions[start].append(an)
+    return positions
+
+def get_norms(annot):
+    # get all the normalizations at this position
+    norms = defaultdict(lambda: [])
+    for an in annot:
+        norms[ an['norm'] ].append(an)
+    return norms
+
+def get_most_support(new):
+    norms = get_norms(new)
+    sort = sorted(norms.values(), key=lambda x : len(x))
+    if len(sort) == 1:
+        return sort[-1][0]['norm']
+    else:
+        if len(sort[-2]) == len(sort[-1]):
+            # if there is a tie for first place
+            return '0'
+        else:
+            # else take the norm from the first norm (they are all the same anyway) in the biggest list
+            return sort[-1][0]['norm']
+
+def get_max_end(annot):
+    end = 0
+    for an in annot:
+        if an['end'] > end:
+            end = an['end']
+    return end
+
+def human_consensus(annotations, uniprot, taxtree):
+    con = {}
+    for document in annotations.keys():
+        #print "document: " + str(document)
+        consensus = []
+
+        if "tagger" in annotations[document]:
+            annotations[document].pop("tagger")
+
+        # spread each annotation over all the positions in the document that it covers
+        docarray = defaultdict(lambda: [])
+        for user in annotations[document]:
+            for annot in annotations[document][user]:
+                for i in range(int(annot['start']), int(annot['end'])+1):
+                    docarray[i].append(annot)
+
+        normlist = []
+        laststart = ''
+
+        for idx in range(0, 3000): # no document is longer than 3000 bytes
+            if idx in docarray:
+                # in a block of annotations
+                for li in docarray[idx]:
+                    normlist.append(li)
+                if not laststart:
+                    laststart = docarray[idx][0]['start']
+            else:
+                if laststart:
+                    # this is the first position after the end of a contiguous block
+                    prev = idx - 1
+                    representative = docarray[prev][0]
+                    annot = {}
+                    annot['annottype'] = representative['annottype']
+                    annot['end'] = str(prev)
+                    annot['start'] = laststart
+                    annot['pmid'] = representative['pmid']
+                    annot['text'] = representative['text'] # TODO fix end position, but this isn't used for anything
+                    annot['user'] = "consensus"
+
+                    # get unique hashes, because hashes are not hashable in python
+                    tuples = tuple(frozenset(d.iteritems()) for d in normlist)
+                    unique = set(tuples)
+                    new = [dict(pairs) for pairs in unique]
+                    annot['norm'] = get_most_support(new)
+
+                    consensus.append(annot)
+                    laststart = ''
+                    normlist = []
+   
+
+        con[document] = consensus
+    return con
 
 def inter_annotator(annotations, uniprot, taxtree):
     # Print interannotator agreement for all documens 
@@ -239,6 +511,10 @@ def inter_annotator(annotations, uniprot, taxtree):
                     stats[user1][user2][document]['proteins']['n_fp'] = 0
                     stats[user1][user2][document]['proteins']['n_fn'] = 0
 
+                    stats[user1][user2][document]['proteins']['u_n_tp'] = 0 # normalization only of proteins in uniprot
+                    stats[user1][user2][document]['proteins']['u_n_fp'] = 0
+                    stats[user1][user2][document]['proteins']['u_n_fn'] = 0
+
                     stats[user1][user2][document]['species']['tp'] = 0
                     stats[user1][user2][document]['species']['fp'] = 0
                     stats[user1][user2][document]['species']['fn'] = 0
@@ -253,33 +529,53 @@ def inter_annotator(annotations, uniprot, taxtree):
                     else:
                         annottype = 'species'
 
-                    match = same_boundaries(annot, annotations[document][user2])
-                    if match:
+                    matches = same_boundaries(annot, annotations[document][user2])
+                    if matches:
+                        # check all matches to see if one has the same annotation
+                        # report tp if one does
+                        # report fp if no match has the same annotation
+                        same_annot = False
                         stats[user1][user2][document][annottype]['n_tp'] += 1
 
-                        if same_normalization(annot, match, uniprot, taxtree):
+                        for match in matches:
+                            if same_normalization(annot, match, uniprot, taxtree):
+                                same_annot = True
+
+                        if same_annot:
                             #print "agree " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end']
                             stats[user1][user2][document][annottype]['tp'] += 1
-
+                            if annottype == 'proteins':
+                                stats[user1][user2][document][annottype]['u_n_tp'] += 1
                             write_results("tp", user1, user2, document, annottype, annot)
 
                         else:
                             #print "norm diff " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm'] + " " + match['norm']
                             stats[user1][user2][document][annottype]['fp'] += 1
-                            stats[user1][user2][document][annottype]['fn'] += 1
+                            #stats[user1][user2][document][annottype]['fn'] += 1
                             write_results("wrongnorm", user1, user2, document, annottype, annot)
 
+                            if annot['annottype'] == 'proteins' and annot['norm'] in uniprot:
+                                stats[user1][user2][document]['proteins']['u_n_fp'] += 1
+
+
                     else:
-                        #print "no match for " + user1 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm']
                         stats[user1][user2][document][annottype]['fp'] += 1
                         stats[user1][user2][document][annottype]['n_fp'] += 1
+                        if annottype == 'proteins':
+                            stats[user1][user2][document][annottype]['u_n_fp'] += 1
                         write_results("wrongboundaries", user1, user2, document, annottype, annot)
 
 
-                for annottype in ['proteins', 'species']:
-                    stats[user1][user2][document][annottype]['fn'] += get_count(annotations[document][user2], annottype) - stats[user1][user2][document][annottype]['tp'] - stats[user1][user2][document][annottype]['fn']
+                stats[user1][user2][document]['proteins']['u_n_precision'] = calc_precision(stats[user1][user2][document]['proteins']['u_n_tp'], stats[user1][user2][document]['proteins']['u_n_fp'])
+                stats[user1][user2][document]['proteins']['u_n_recall'] = calc_recall(stats[user1][user2][document]['proteins']['u_n_tp'], stats[user1][user2][document]['proteins']['u_n_fn'] )
 
-                    stats[user1][user2][document][annottype]['n_fn'] += get_count(annotations[document][user2], annottype) - stats[user1][user2][document][annottype]['n_tp'] - stats[user1][user2][document][annottype]['n_fn']
+                for annottype in ['proteins', 'species']:
+                    stats[user1][user2][document][annottype]['fn'] += get_count(annotations[document][user2], annottype) - stats[user1][user2][document][annottype]['tp'] #- stats[user1][user2][document][annottype]['fn']
+
+                    if annottype == 'proteins':
+                        stats[user1][user2][document][annottype]['u_n_fn'] += get_count(annotations[document][user2], annottype) - stats[user1][user2][document][annottype]['u_n_tp'] #- stats[user1][user2][document][annottype]['fn']
+
+                    stats[user1][user2][document][annottype]['n_fn'] += get_count(annotations[document][user2], annottype) - stats[user1][user2][document][annottype]['n_tp'] #- stats[user1][user2][document][annottype]['n_fn']
 
                     stats[user1][user2][document][annottype]['precision'] = calc_precision(stats[user1][user2][document][annottype]['tp'], stats[user1][user2][document][annottype]['fp'])
                     stats[user1][user2][document][annottype]['recall'] = calc_recall(stats[user1][user2][document][annottype]['tp'], stats[user1][user2][document][annottype]['fn'] )
@@ -287,7 +583,6 @@ def inter_annotator(annotations, uniprot, taxtree):
                     stats[user1][user2][document][annottype]['n_precision'] = calc_precision(stats[user1][user2][document][annottype]['n_tp'], stats[user1][user2][document][annottype]['n_fp'])
                     stats[user1][user2][document][annottype]['n_recall'] = calc_recall(stats[user1][user2][document][annottype]['n_tp'], stats[user1][user2][document][annottype]['n_fn'])
 
-    #pprint.pprint(stats)
     return stats;
 
 def get_count(annot, annottype):
@@ -319,9 +614,16 @@ def calc_fscore(r, p):
     else:
         return 2*r*p / (r+p)
 
+def print_consensus(con):
+    outputfile = "results.consensus"
+    with open(outputfile, "w") as f:
+        f.write(pprint.pformat(con))
+
+
 def print_stats(stats):
     #print "annottype\tuser1\tuser2\tdocument\tprecision\trecall\tn_precision\tn_recall"
     print "annottype\tuser1\tuser2\tdocument\tf score\t unnorm f score"
+    store = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict())))
     for user1 in stats:
         for user2 in stats[user1]:
             
@@ -333,6 +635,10 @@ def print_stats(stats):
                 ac_n_tp = 0
                 ac_n_fp = 0
                 ac_n_fn = 0
+
+                ac_u_n_tp = 0
+                ac_u_n_fp = 0
+                ac_u_n_fn = 0
 
                 for document in stats[user1][user2]:
                     recall = stats[user1][user2][document][annottype]['recall']
@@ -350,14 +656,13 @@ def print_stats(stats):
                     ac_n_fp += stats[user1][user2][document][annottype]['n_fp']
                     ac_n_fn += stats[user1][user2][document][annottype]['n_fn']
 
-                    fscore = 0
-                    n_fscore = 0
-                    if precision + recall > 0:
-                        fscore = 2 * recall * precision / (precision + recall)
-                        n_fscore = 2 * n_recall * n_precision / (n_precision + n_recall)
-                    #print user1 + "\t" + user2 + "\t" + document + "\t" + str(tp) + "\t" + str(fp) + "\t" + str(fn) 
-                    #print annottype + "\t" + user1 + "\t" + user2 + "\t" + document + "\t" + str(fscore) + "\t" + str(n_fscore)
+                    if annottype == 'proteins':
+                        ac_u_n_tp += stats[user1][user2][document][annottype]['u_n_tp']
+                        ac_u_n_fp += stats[user1][user2][document][annottype]['u_n_fp']
+                        ac_u_n_fn += stats[user1][user2][document][annottype]['u_n_fn']
 
+
+                # across all documents
                 ac_precision = calc_precision(ac_tp, ac_fp)
                 ac_recall = calc_recall(ac_tp, ac_fn)
                 ac_fscore = calc_fscore(ac_recall, ac_precision)
@@ -366,8 +671,43 @@ def print_stats(stats):
                 ac_n_recall = calc_recall(ac_n_tp, ac_n_fn)
                 ac_n_fscore = calc_fscore(ac_n_recall, ac_n_precision)
 
-                #print annottype + " overall " + user1 + "\t" + user2 + "\t" + str(ac_precision) + "\t" + str(ac_recall) + "\t" + str(ac_n_precision) + "\t" + str(ac_n_recall)
-                print annottype + "\toverall\t" + user1 + "\t" + user2 + "\t" + str(ac_fscore) + "\t" + str(ac_n_fscore)
+                store[user1][user2][annottype]['tp'] = ac_tp
+                store[user1][user2][annottype]['n_tp'] = ac_n_tp
+                store[user1][user2][annottype]['fp'] = ac_fp
+                store[user1][user2][annottype]['n_fp'] = ac_n_fp
+                store[user1][user2][annottype]['fn'] = ac_fn
+                store[user1][user2][annottype]['n_fn'] = ac_n_fn
+
+                if annottype == 'proteins':
+                    store[user1][user2][annottype]['u_n_tp'] = ac_u_n_tp
+                    store[user1][user2][annottype]['u_n_fp'] = ac_u_n_fp
+                    store[user1][user2][annottype]['u_n_fn'] = ac_u_n_fn
+
+
+    for user1 in store:
+        for user2 in store[user1]:
+            for annottype in ['proteins', 'species']:
+                if annottype not in store[user1][user2]:
+                    if annottype not in store[user2][user1]:
+                        ac_fscore = 1
+                        ac_n_fscore = 1
+                    else:
+                        ac_fscore = "NA"
+                        ac_n_fscore = "NA"
+                else:
+                    if annottype not in store[user2][user1]:
+                        ac_fscore = "NA"
+                        ac_n_fscore = "NA"
+                    else:
+                        prec = calc_precision( store[user1][user2][annottype]['tp'] + store[user2][user1][annottype]['tp'] , store[user1][user2][annottype]['fp'] + store[user2][user1][annottype]['fp'])
+                        n_prec = calc_precision( store[user1][user2][annottype]['n_tp'] + store[user2][user1][annottype]['n_tp'] , store[user1][user2][annottype]['n_fp'] + store[user2][user1][annottype]['n_fp'])
+                        ac_fscore = calc_fscore(prec, prec)
+                        ac_n_fscore = calc_fscore(n_prec, n_prec)
+                    #print annottype + " overall " + user1 + "\t" + user2 + "\t" + str(ac_precision) + "\t" + str(ac_recall) + "\t" + str(ac_n_precision) + "\t" + str(ac_n_recall)
+                if annottype == "proteins":
+                    u_n_prec = calc_precision( store[user1][user2][annottype]['u_n_tp'] + store[user2][user1][annottype]['u_n_tp'], store[user1][user2][annottype]['u_n_fp'] + store[user2][user1][annottype]['u_n_fp'])
+                    ac_u_n_fscore = calc_fscore(u_n_prec, u_n_prec)
+                print annottype + "\toverall\t" + user1 + "\t" + user2 + "\t" + str(ac_fscore) + "\t" + str(ac_n_fscore) + "\t" + str(ac_u_n_fscore)
     return True
 
 
@@ -564,44 +904,10 @@ def read_project_list(filename):
             projects.append(cols[0])
     return projects
 
-# todo get these from ncbi_taxonomy module.... ???
-def parse_taxtree(filename, returnlevel=False):
-    with open(filename) as f:
-        # read in the ncbi tax nodes.dmp file
-        taxtree = {}
-        taxlevel = {}
-        for line in f:
-            array = line.rstrip("\n").split("|")
-            taxid = int(array[0].strip("\t"))
-            parent = int(array[1].strip("\t"))
-            level = array[2].strip("\t")
-            taxtree[taxid] = parent
-            taxlevel[taxid] = level
-        if returnlevel:
-            return (taxtree, taxlevel)
-        else:
-            return taxtree
-
-def climb_tax_tree(taxid, taxtree):
-    # climb the tree to the root and return the lineage
-    taxid = int(taxid)
-
-    if taxid in taxtree:
-        parent = taxtree[taxid]
-    else:
-        # TODO this is a problem
-        #print "id " + str(taxid) + " not found in taxtree.  this is bad"
-        return []
-
-    lineage = [taxid]
-    while parent != 1:
-        lineage.insert(0, parent)
-        if parent in taxtree:
-            parent = taxtree[parent]
-        else:
-            print "parent " + str(parent) + " not found in taxtree.  this is very bad"
-            return -1
-    return lineage
+def combine_annot(consensus, tagger):
+    for doc, item in consensus.iteritems():
+        tagger[doc]['consensus'] = item
+    return tagger
 
 def main():
     parser = argparse.ArgumentParser(description="Calculate interannotator etc stats")
@@ -613,6 +919,12 @@ def main():
                 nargs='+',
                 dest='inputfile',
                 help="list of annotation files")
+
+    parser.add_argument('-c', '--corpus',
+                required=False,
+                default = "",
+                dest='corpus',
+                help="corpus file that tagger reads")
 
     parser.add_argument('-u', '--uniprot',
                 required=True,
@@ -637,18 +949,45 @@ def main():
     args=parser.parse_args()
 
     annotations = defaultdict(lambda: defaultdict(list))
+    tagger_annot = defaultdict(lambda: defaultdict(list))
 
     if args.inputfile:
         for inputfile in args.inputfile:
             # add all annotations into one dictionary
-            annotations = parse_annotations(inputfile, annotations)
+            annotations = parse_annotations_json(inputfile, annotations)
 
-    if args.output and args.entities:
-        annotations = parse_tagger(args.output, args.entities, annotations)
+    if args.output and args.entities and args.corpus:
+        tagger_annot = parse_tagger(args.output, args.entities, tagger_annot)
+        corpus = parse_corpus(args.corpus)
+        tagger_annot = convert_tagger_bytes_to_char(tagger_annot, corpus)
 
     uniprot = parse_uniprot_single_xml(args.uniprot)
-    taxtree = parse_taxtree(args.taxonomy)
-    stats = inter_annotator(annotations, uniprot, taxtree)
+    taxtree, taxlevel = tax.parse_taxtree(args.taxonomy, True)
+    annotations = filter_annotations(annotations, taxtree, taxlevel) # remove annotations for species that are above species level
+    consensus = human_consensus(annotations, uniprot, taxtree)
+    #pprint.pprint(annotations['3040055']['Helen'])
+    #pprint.pprint(consensus['3040055'])
+    #pprint.pprint(annotations['9191870']['Rudolfs'])
+    #pprint.pprint(consensus['9191870'])
+    #print " Rudolfs ***************************************"
+    #pprint.pprint(annotations['16227217']['Rudolfs'])
+    #print " Juanmi ***************************************"
+    #pprint.pprint(annotations['16227217']['Juanmi'])
+    #print " Consensus ***************************************"
+    #pprint.pprint(consensus['16227217'])
+    #print " cristina ***************************************"
+    #pprint.pprint(annotations['15680420']['Cristina'])
+    #print " helen ***************************************"
+    #pprint.pprint(annotations['15680420']['Helen'])
+    #print " Consensus ***************************************"
+    #pprint.pprint(consensus['15680420'])
+    iaa = inter_annotator(annotations, uniprot, taxtree)
+    print_stats(iaa)
+    print_consensus(consensus)
+    print "combined results"
+    combined = combine_annot(consensus, tagger_annot)
+    #pprint.pprint(combined)
+    stats = inter_annotator(combined, uniprot, taxtree)
     print_stats(stats)
 
 
