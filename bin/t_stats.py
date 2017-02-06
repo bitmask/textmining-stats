@@ -14,42 +14,82 @@ consensus_testcases = {
     'agree': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'}],
                           'user2': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'}],
                          },
-               'expected': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans'}],
+                         'expected': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11676', 'user': '2'}, {'norm': '11676', 'user': '1'}] }],
              },
 
     'di_n2': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'}],
                           'user2': [{'start': '10', 'end': '20', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'}],
                          },
-               'expected': [{'start': '10', 'end': '20', 'norm': '0', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans'}],
+               'expected': [{'start': '10', 'end': '20', 'norm': 'tie', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11676', 'user': '1'}, {'norm': '11234', 'user': '2'}] }],
              },
     'di_n3': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'}],
                           'user2': [{'start': '10', 'end': '20', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'}],
                           'user3': [{'start': '10', 'end': '20', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': '3', 'pmid': 'humans'}],
                          },
-               'expected': [{'start': '10', 'end': '20', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans'}],
+                         'expected': [{'start': '10', 'end': '20', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11234', 'user': '3'}, {'norm': '11234', 'user': '2'}, {'norm': '11676', 'user': '1' }]}],
              },
 
     'di_p1': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'}],
                           'user2': [{'start': '10', 'end': '30', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'}],
                          },
-               'expected': [{'start': '10', 'end': '30', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans'}],
+               'expected': [{'start': '10', 'end': '30', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11676', 'user': '2'}, {'norm': '11676', 'user': '1'}] }],
              },
     'di_p2': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'}],
                           'user2': [{'start': '15', 'end': '30', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'}],
                          },
-               'expected': [{'start': '10', 'end': '30', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans'}],
+               'expected': [{'start': '10', 'end': '30', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11676', 'user': '1'}, {'norm': '11676', 'user': '2'}] }],
              },
 
     'd_p_n': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'}],
                           'user2': [{'start': '15', 'end': '30', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'}],
                           'user3': [{'start': '15', 'end': '30', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': '3', 'pmid': 'humans'}],
                          },
-               'expected': [{'start': '10', 'end': '30', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans'}],
+               'expected': [{'start': '10', 'end': '30', 'norm': '11234', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11234', 'user': '3'}, {'norm': '11234', 'user': '2'}, {'norm': '11676', 'user': '1'}] }],
              },
+
+    '_two_': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'},
+                                   {'start': '30', 'end': '120', 'norm': 'A12_VACCW', 'annottype': 'e_2', 'text': 'prot', 'user': '1', 'pmid': 'humans'}
+                                   ],
+                          'user2': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'},
+                                   {'start': '30', 'end': '120', 'norm': 'A12_VACCW', 'annottype': 'e_2', 'text': 'prot', 'user': '2', 'pmid': 'humans'}
+                                   ],
+                         },
+               'expected': [
+                    {'start': '30', 'end': '120', 'norm': 'A12_VACCW', 'annottype': 'e_2', 'text': 'prot', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': 'A12_VACCW', 'user': '1'}, {'norm': 'A12_VACCW', 'user': '2'}] },
+                    {'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11676', 'user': '2'}, {'norm': '11676', 'user': '1'}] },
+                            ],
+             },
+      
+    # any closer and the annotations merge
+    'adjac': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'},
+                                   {'start': '21', 'end': '120', 'norm': 'A12_VACCW', 'annottype': 'e_2', 'text': 'prot', 'user': '1', 'pmid': 'humans'}
+                                   ],
+                          'user2': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'},
+                                   {'start': '21', 'end': '120', 'norm': 'A12_VACCW', 'annottype': 'e_2', 'text': 'prot', 'user': '2', 'pmid': 'humans'}
+                                   ],
+                         },
+               'expected': [
+                    {'start': '21', 'end': '120', 'norm': 'A12_VACCW', 'annottype': 'e_2', 'text': 'prot', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': 'A12_VACCW', 'user': '2'}, {'norm': 'A12_VACCW', 'user': '1'}] },
+                    {'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11676', 'user': '2'}, {'norm': '11676', 'user': '1'}] },
+                            ],
+             },
+    '2nrms': { 'humans': {'user1': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'},
+                                    {'start': '10', 'end': '20', 'norm': '11709', 'annottype': 'e_1', 'text': 'foo', 'user': '1', 'pmid': 'humans'}
+                                   ],
+                          'user2': [{'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'},
+                                   {'start': '10', 'end': '20', 'norm': '11709', 'annottype': 'e_1', 'text': 'foo', 'user': '2', 'pmid': 'humans'}
+                                   ],
+                         },
+               'expected': [
+                    {'start': '10', 'end': '20', 'norm': '11676', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11676', 'user': '2'}, {'norm': '11676', 'user': '1'}] },
+                    {'start': '10', 'end': '20', 'norm': '11709', 'annottype': 'e_1', 'text': 'foo', 'user': 'consensus', 'pmid': 'humans', 'consensus': [{'norm': '11709', 'user': '2'}, {'norm': '11709', 'user': '1'}] },
+                            ],
+             },
+
 }
 
 fscore_testcases = [
-    # test name, document, recall, precision, n_recall, n_precision
+    # annottype, test name, document, recall, precision, n_recall, n_precision
     ["proteins", "same_bound_same_norm_100", "100", 1, 1, 1, 1],
     ["proteins", "diff_bound_same_norm_101", "101", 1, 1, 1, 1],
     ["proteins", "same_bound_diff_norm_102", "102", 0, 0, 1, 1],
@@ -66,6 +106,10 @@ fscore_testcases = [
     ["species", "diff_bound_diff_norm_3388771", "3388771", 0, 0, 1, 1],
     ["species", "same_bound_similar_norm_3388772", "3388772", 1, 1, 1, 1],
     ["species", "same_bound_similar_norm_adeno_3001", "3001", 1, 1, 1, 1],
+
+
+    # real examples
+    ["species", "acronym_in_or_out", "19793804", 1, 1, 1, 1],
 
 ]
 
@@ -174,10 +218,10 @@ def test_generator_fscore(annottype, document, recall, precision, n_recall, n_pr
             annotations = parse_annotations(self.data_dir + f, annotations)
         stats = inter_annotator(annotations, uniprot, taxtree)
 
-        self.assertEqual( stats["1"]["2"][document][annottype]["recall"], recall, 'recall')
-        self.assertEqual( stats["1"]["2"][document][annottype]["precision"], precision, 'precision')
-        self.assertEqual( stats["1"]["2"][document][annottype]["n_recall"], n_recall, 'n_recall' )
-        self.assertEqual( stats["1"]["2"][document][annottype]["n_precision"], n_precision, 'n_precision' )
+        self.assertEqual( stats["1"]["2"][document][annottype]["precision"], precision)
+        self.assertEqual( stats["1"]["2"][document][annottype]["n_recall"], n_recall)
+        self.assertEqual( stats["1"]["2"][document][annottype]["n_precision"], n_precision)
+        self.assertEqual( stats["1"]["2"][document][annottype]["recall"], recall)
     return test
 
 def test_generator_offset(pmid, para_name, expected):
@@ -189,8 +233,9 @@ def test_generator_offset(pmid, para_name, expected):
 
 def test_generator_consensus(case, uniprot, taxtree):
     def test(self):
+        self.maxDiff = None
         actual = human_consensus({'humans': case['humans']}, uniprot, taxtree)
-        self.assertEqual(actual['humans'], case['expected'])
+        self.assertItemsEqual(actual['humans'], case['expected'])
     return test
 
 class TestIAA(unittest.TestCase):
