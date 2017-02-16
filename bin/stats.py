@@ -4,12 +4,12 @@ import re
 import Bio
 import shlex
 from subprocess import Popen, PIPE
-import os.path
 import ncbi_taxonomy.ncbi_taxonomy as tax
 import pprint
 import numpy as np
 import glob
 import json
+import os
 
 
 # RUN WITH Python 2.0 or fix '' == u'' comparisons of strings to unicode strings
@@ -185,6 +185,8 @@ def convert_annottype(annottype):
         return "e_1" # species
     else:
         return "e_2" # protein
+    if annottype == 0:
+        return False
     
 def parse_tagger(tagger_output_file, entities_file, annotations):
     #Parse the tagger output file and also include the x_entities entries
@@ -201,19 +203,19 @@ def parse_tagger(tagger_output_file, entities_file, annotations):
             if serialno in entities:
                 (annottype, normid) = entities[serialno]
                 annottype = convert_annottype(annottype)
+                if annottype:
+                    # fix deprecated ncbi tax entries
+                    normid = update_deprecated_taxids(normid)
 
-                # fix deprecated ncbi tax entries
-                normid = update_deprecated_taxids(normid)
-
-                annot = {'text': annot, 'norm': normid, 'start': start, 'end': str(int(end)+1), 'user': user, 'pmid': pmid, 'annottype': annottype}
-                annotations[pmid][user].append(annot)
+                    annot = {'text': annot, 'norm': normid, 'start': str(int(start) + 1), 'end': str(int(end)+0), 'user': user, 'pmid': pmid, 'annottype': annottype}
+                    annotations[pmid][user].append(annot)
             else:
                 # it's a group
                 pass
                     
     return annotations
 
-def dedup_tagger(annotations, uniprot, taxtree, unreviewed):
+def dedup_tagger(annotations, uniprot, taxtree, taxlevel, unreviewed):
     # take the tagger output and for all annotations that have the same boundaries, dedup normalizations
     for pmid in annotations.keys():
         for user in annotations[pmid].keys():
@@ -231,7 +233,7 @@ def dedup_tagger(annotations, uniprot, taxtree, unreviewed):
                         annot_at_pos[key] = [new]
                 new_annot = []
                 for pos,thing in annot_at_pos.iteritems():
-                    new_annot += collapse_same_norm(thing, uniprot, taxtree, unreviewed)
+                    new_annot += collapse_same_norm(thing, uniprot, taxtree, taxlevel, unreviewed)
 
                 annotations[pmid][user] = new_annot
 
@@ -297,9 +299,14 @@ def get_unreviewed_sequence(norm, unreviewed):
     else:
         return ''
 
+def where_trees_meet(tree1, tree2):
+    lowest_same = 0
+    for t,u in zip(tree1, tree2):
+        if t == u:
+            lowest_same = t
+    return int(lowest_same)
 
-
-def same_normalization(annot, an, uniprot, taxtree, unreviewed):
+def same_normalization(annot, an, uniprot, taxtree, taxlevel, unreviewed):
     if an['norm'] == annot['norm']:
         return True
     else:
@@ -334,17 +341,31 @@ def same_normalization(annot, an, uniprot, taxtree, unreviewed):
             try:
                 tree1 = tax.climb_tax_tree(int(annot['norm']), taxtree)
                 tree2 = tax.climb_tax_tree(int(an['norm']), taxtree)
-                if int(an['norm']) in tree1 or int(annot['norm']) in tree2:
+
+                if 10509 in tree1 and 10509 in tree2:
+                    # exception for Adenovirus
                     return True
-                else:
-                    if 10509 in tree1 and 10509 in tree2:
-                        # exception for Adenovirus
-                        return True
-                    else:
-                        return False
+
+                level = where_trees_meet(tree1, tree2)
+                below_species = is_below_species(level, taxtree, taxlevel)
+                if taxlevel[level].lower() == 'species' or below_species == True:
+                    return True
+
+                return False
             except:
                 return False # if someone has put a protein id where a taxid should go ??
     return False
+
+def is_below_species(taxid, taxtree, taxlevel):
+    below_species = False
+    if taxlevel[taxid].lower() == 'no rank':
+        tree = tax.climb_tax_tree(taxid, taxtree)
+        tree.reverse() # go up the tree
+        for t in tree:
+            if taxlevel[t] == 'species':
+                below_species = True
+    return below_species
+
 
 
 def blast(seq1, seq2, pident):
@@ -373,8 +394,25 @@ def blast(seq1, seq2, pident):
         return False
     return False
 
+def clean_up_old_results():
+    for phase in ["tp", "wrongnorm", "wrongboundaries"]:
+        for who in ["humans", "tagger", "consensus"]:
+            for annottype in ["proteins", "species"]:
+                out_file = "results." + who + "." + phase + "." + annottype
+                if os.path.exists(out_file):
+                    os.remove(out_file)
+
 def write_results(phase, user1, user2, document, annottype, annot):
-    outfile = "results." + phase + "." + annottype
+
+    if user1 == "tagger":
+        who = "tagger"
+    elif user2 == "tagger":
+        who = "consensus"
+    else:
+        who = "humans"
+
+    outfile = "results." + who + "." + phase + "." + annottype
+
     with open(outfile, 'a') as f:
         try:
             f.write(document.encode('utf-8') + "\t")
@@ -425,17 +463,19 @@ def filter_annotations(annotations, taxtree, taxlevel):
                                 report_to_user(a)
                             if n:
                                 t = taxlevel[int(n)].lower()
-                                if t == "genus" or t == "subfamily" or t == "family" or t == "order":
-                                    pass
-                                else:
+                                below_species = is_below_species(int(n), taxtree, taxlevel)
+                                if t == "species" or below_species:
                                     add.append(str(n))
+                                else:
+                                    #t == "genus" or t == "subfamily" or t == "family" or t == "order":
+                                    pass
 
                         if add:
                             add.sort()
                             a['norm'] = ",".join(add)
                             clean_annotations.append(a)
 
-                else: 
+                elif a['annottype'] == "e_2": 
                     # add all the proteins
                     clean_annotations.append(a)
 
@@ -515,19 +555,19 @@ def get_disagreeing_norms(array):
         annot.append(a['norm'])
     return list(set(annot))
 
-def collapse_same_norm(items, uniprot, taxtree, unreviewed):
+def collapse_same_norm(items, uniprot, taxtree, taxlevel, unreviewed):
     # assumes no user has normalized an entity to two normalizations that are equivalent (why would you do this anyway?)
     deduped = []
     for new in items:
         on_list = False
         for existing in deduped:
-            if same_normalization(new, existing, uniprot, taxtree, unreviewed):
+            if same_normalization(new, existing, uniprot, taxtree, taxlevel, unreviewed):
                 on_list = True
         if not on_list:
             deduped.append(new)
     return deduped
 
-def human_consensus(annotations, uniprot, taxtree, unreviewed):
+def human_consensus(annotations, uniprot, taxtree, taxlevel, unreviewed):
     con = {}
     for document in annotations.keys():
         #print "document: " + str(document)
@@ -572,7 +612,7 @@ def human_consensus(annotations, uniprot, taxtree, unreviewed):
                     new = [dict(pairs) for pairs in unique]
 
                     # norms that are fuzzily the same are collapsed here
-                    deduped = collapse_same_norm(new, uniprot, taxtree, unreviewed)
+                    deduped = collapse_same_norm(new, uniprot, taxtree, taxlevel, unreviewed)
 
                     annot['norm'] = get_most_support(deduped)
 
@@ -589,7 +629,7 @@ def human_consensus(annotations, uniprot, taxtree, unreviewed):
         con[document] = consensus
     return con
 
-def inter_annotator(annotations, uniprot, taxtree, unreviewed):
+def inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed):
     # Print interannotator agreement for all documens 
     stats = {}
     for document in annotations.keys():
@@ -602,8 +642,6 @@ def inter_annotator(annotations, uniprot, taxtree, unreviewed):
                 if not user2 in stats[user1]:
                     stats[user1][user2] = {}
                 if not document in stats[user1][user2]:
-                    with open("results.iaa", 'a') as f:
-                        f.write(user1 + "\t" + user2 + "\t" + document + "\n")
                     stats[user1][user2][document] = {}
                     stats[user1][user2][document]['proteins'] = {}
                     stats[user1][user2][document]['species'] = {}
@@ -643,7 +681,7 @@ def inter_annotator(annotations, uniprot, taxtree, unreviewed):
                         stats[user1][user2][document][annottype]['n_tp'] += 1
 
                         for match in matches:
-                            if same_normalization(annot, match, uniprot, taxtree, unreviewed):
+                            if same_normalization(annot, match, uniprot, taxtree, taxlevel, unreviewed):
                                 same_annot = True
 
                         if same_annot:
@@ -1126,6 +1164,8 @@ def main():
             # add all annotations into one dictionary
             annotations = parse_annotations_json(inputfile, annotations)
 
+    clean_up_old_results()
+
     uniprot = parse_uniprot_single_xml(args.uniprot)
 
     unrev_path = "../../../uniprot_to_payload/data_in/proteomes_unreviewed/"
@@ -1135,16 +1175,17 @@ def main():
 
     if args.output and args.entities and args.corpus:
         tagger_annot = parse_tagger(args.output, args.entities, tagger_annot)
-        tagger_annot = dedup_tagger(tagger_annot, uniprot, taxtree, unreviewed)
+        tagger_annot = dedup_tagger(tagger_annot, uniprot, taxtree, taxlevel, unreviewed)
         corpus = parse_corpus(args.corpus)
         tagger_annot = convert_tagger_bytes_to_char(tagger_annot, corpus)
+        tagger_annot = filter_annotations(tagger_annot, taxtree, taxlevel)
 
     annotations = filter_annotations(annotations, taxtree, taxlevel) # remove annotations for species that are above species level
 
     # get the list of unreviewed proteins to download and parse above
     #print_unreviewed_proteins(annotations, uniprot)
 
-    consensus = human_consensus(annotations, uniprot, taxtree, unreviewed)
+    consensus = human_consensus(annotations, uniprot, taxtree, taxlevel, unreviewed)
     #pprint.pprint(annotations['3040055']['Helen'])
     #pprint.pprint(consensus['3040055'])
     #pprint.pprint(annotations['9191870']['Rudolfs'])
@@ -1161,13 +1202,13 @@ def main():
     #pprint.pprint(annotations['15680420']['Helen'])
     #print " Consensus ***************************************"
     #pprint.pprint(consensus['15680420'])
-    iaa = inter_annotator(annotations, uniprot, taxtree, unreviewed)
+    iaa = inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed)
     print_stats(iaa, False)
     print_consensus(consensus)
     print "combined results"
     combined = combine_annot(consensus, tagger_annot)
     #pprint.pprint(combined)
-    stats = inter_annotator(combined, uniprot, taxtree, unreviewed)
+    stats = inter_annotator(combined, uniprot, taxtree, taxlevel, unreviewed)
     print_stats(stats, True)
 
 
