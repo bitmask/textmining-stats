@@ -31,6 +31,8 @@ def parse_corpus(inputfile):
 
 def get_user_from_inputfile(inputfile):
     field = os.path.basename(inputfile).split(".")
+    if field[0] == "resolution":
+        return "resolution"
     if field[1] == "test2":
         return "Helen"
     user = field[1].split("-")
@@ -347,7 +349,7 @@ def same_normalization(annot, an, uniprot, taxtree, taxlevel, unreviewed):
                     return True
 
                 level = where_trees_meet(tree1, tree2)
-                below_species = is_below_species(level, taxtree, taxlevel)
+                below_species = is_below_level(level, taxtree, taxlevel, 'species')
                 if taxlevel[level].lower() == 'species' or below_species == True:
                     return True
 
@@ -356,13 +358,13 @@ def same_normalization(annot, an, uniprot, taxtree, taxlevel, unreviewed):
                 return False # if someone has put a protein id where a taxid should go ??
     return False
 
-def is_below_species(taxid, taxtree, taxlevel):
+def is_below_level(taxid, taxtree, taxlevel, level):
     below_species = False
     if taxlevel[taxid].lower() == 'no rank':
         tree = tax.climb_tax_tree(taxid, taxtree)
         tree.reverse() # go up the tree
         for t in tree:
-            if taxlevel[t] == 'species':
+            if taxlevel[t] == level:
                 below_species = True
     return below_species
 
@@ -402,7 +404,7 @@ def clean_up_old_results():
                 if os.path.exists(out_file):
                     os.remove(out_file)
 
-def write_results(phase, user1, user2, document, annottype, annot):
+def write_results(phase, user1, user2, document, annottype, annot, uniprot, unreviewed):
 
     if user1 == "tagger":
         who = "tagger"
@@ -420,6 +422,10 @@ def write_results(phase, user1, user2, document, annottype, annot):
             f.write(user2 + "\t")
             f.write(annot['text'].encode('utf-8') + "\t")
             f.write(annot['norm'].encode('utf-8') + "\t")
+            if annot['norm'] in uniprot or annot['norm'] in unreviewed:
+                f.write("in uniprot\t")
+            else:
+                f.write("\t")
             f.write(annot['start'] + "\t")
             f.write(annot['end'] + "\n")
         except:
@@ -463,7 +469,7 @@ def filter_annotations(annotations, taxtree, taxlevel):
                                 report_to_user(a)
                             if n:
                                 t = taxlevel[int(n)].lower()
-                                below_species = is_below_species(int(n), taxtree, taxlevel)
+                                below_species = is_below_level(int(n), taxtree, taxlevel, 'species')
                                 if t == "species" or below_species:
                                     add.append(str(n))
                                 else:
@@ -689,15 +695,16 @@ def inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed):
                             stats[user1][user2][document][annottype]['tp'] += 1
                             if annottype == 'proteins':
                                 stats[user1][user2][document][annottype]['u_n_tp'] += 1
-                            write_results("tp", user1, user2, document, annottype, annot)
+                            write_results("tp", user1, user2, document, annottype, annot, uniprot, unreviewed)
+                            
 
                         else:
                             #print "norm diff " + user1 + " " + user2 + " " + annot['text'] + " " + annot['start'] + " " + annot['end'] + " " + annot['norm'] + " " + match['norm']
                             stats[user1][user2][document][annottype]['fp'] += 1
                             #stats[user1][user2][document][annottype]['fn'] += 1
-                            write_results("wrongnorm", user1, user2, document, annottype, annot)
+                            write_results("wrongnorm", user1, user2, document, annottype, annot, uniprot, unreviewed)
 
-                            if annot['annottype'] == 'proteins' and annot['norm'] in uniprot:
+                            if annot['annottype'] == 'proteins' and (annot['norm'] in uniprot or annot['norm'] in unreviewed):
                                 stats[user1][user2][document]['proteins']['u_n_fp'] += 1
 
 
@@ -706,7 +713,7 @@ def inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed):
                         stats[user1][user2][document][annottype]['n_fp'] += 1
                         if annottype == 'proteins':
                             stats[user1][user2][document][annottype]['u_n_fp'] += 1
-                        write_results("wrongboundaries", user1, user2, document, annottype, annot)
+                        write_results("wrongboundaries", user1, user2, document, annottype, annot, uniprot, unreviewed)
 
 
 
@@ -714,7 +721,7 @@ def inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed):
                     stats[user1][user2][document][annottype]['fn'] += get_false_negs(get_count(annotations[document][user2], annottype), stats[user1][user2][document][annottype]['tp'])
 
                     if annottype == 'proteins':
-                        stats[user1][user2][document][annottype]['u_n_fn'] += get_false_negs(get_count(annotations[document][user2], annottype), stats[user1][user2][document][annottype]['u_n_tp'])
+                        stats[user1][user2][document][annottype]['u_n_fn'] += get_false_negs(get_count_in_uniprot(annotations[document][user2], annottype, uniprot, unreviewed), stats[user1][user2][document][annottype]['u_n_tp'])
 
                     stats[user1][user2][document][annottype]['n_fn'] += get_false_negs(get_count(annotations[document][user2], annottype), stats[user1][user2][document][annottype]['n_tp'])
 
@@ -729,12 +736,108 @@ def inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed):
 
     return stats;
 
+def get_uniq_norms(annottype, array, uniprot, taxtree, taxlevel, unreviewed):
+    unique = []
+    for annot in array:
+        if annot['annottype'] == annottype:
+            already_seen = False
+            for a in unique:
+                if same_normalization(annot, a, uniprot, taxtree, taxlevel, unreviewed):
+                    already_seen = True
+            if not already_seen:
+                unique.append(annot)
+    return unique
+
+def doc_level_norm(annotations, uniprot, taxtree, taxlevel, unreviewed):
+    t_tp_prot = 0
+    t_fp_prot = 0
+    t_fn_prot = 0
+    t_fp_uniprot = 0
+    t_fn_uniprot = 0
+    t_tp_species = 0
+    t_fp_species = 0
+    t_fn_species = 0
+
+    for document in annotations.keys():
+
+        uniq = {}
+        uniq['tagger'] = {}
+        uniq['consensus'] = {}
+        uniq['tagger']['prot'] = get_uniq_norms("e_2", annotations[document]['tagger'], uniprot, taxtree, taxlevel, unreviewed)
+        uniq['consensus']['prot'] = get_uniq_norms("e_2", annotations[document]['consensus'], uniprot, taxtree, taxlevel, unreviewed)
+        uniq['tagger']['species'] = get_uniq_norms("e_1", annotations[document]['tagger'], uniprot, taxtree, taxlevel, unreviewed)
+        uniq['consensus']['species'] = get_uniq_norms("e_1", annotations[document]['consensus'], uniprot, taxtree, taxlevel, unreviewed)
+
+        stats = {}
+        stats['prot'] = {}
+        stats['species'] = {}
+        
+        stats['prot']['tp'] = 0
+        stats['prot']['fp'] = 0
+        stats['prot']['fn'] = 0
+        stats['species']['tp'] = 0
+        stats['species']['fp'] = 0
+        stats['species']['fn'] = 0
+
+        for annottype in ['prot', 'species']:
+            for t in uniq['tagger'][annottype]:
+                found = False
+                for c in uniq['consensus'][annottype]:
+                    if same_normalization(t, c, uniprot, taxtree, taxlevel, unreviewed):
+                        found = True
+                if found:
+                    stats[annottype]['tp'] += 1
+                    write_results("doclevel-tp", "tagger", "consensus", document, annottype, t, uniprot, unreviewed)
+                    # if tp then in uniprot
+                else:
+                    stats[annottype]['fp'] += 1
+                    write_results("doclevel-fp", "tagger", "consensus", document, annottype, t, uniprot, unreviewed)
+                    if t['norm'] in uniprot: # or t['norm'] in unreviewed:
+                        t_fp_uniprot += 1
+            stats[annottype]['fn'] = len(uniq['consensus'][annottype]) - stats[annottype]['tp']
+
+            for a in uniq['consensus'][annottype]:
+                write_results("doclevel-all", "consensus", "tagger", document, annottype, a, uniprot, unreviewed)
+
+            if annottype == 'prot':
+                t_tp_prot += stats[annottype]['tp']
+                t_fp_prot += stats[annottype]['fp']
+                t_fn_prot += stats[annottype]['fn']
+                t_fn_uniprot += get_count_in_uniprot(uniq['consensus'][annottype], annottype, uniprot, unreviewed) - stats[annottype]['tp']
+            if annottype == 'species':
+                t_tp_species += stats[annottype]['tp']
+                t_fp_species += stats[annottype]['fp']
+                t_fn_species += stats[annottype]['fn']
+
+    t_prec_prot = calc_precision(t_tp_prot, t_fp_prot)
+    t_recall_prot = calc_recall(t_tp_prot, t_fn_prot)
+    t_prec_species = calc_precision(t_tp_species, t_fp_species)
+    t_recall_species = calc_recall(t_tp_species, t_fn_species)
+
+    t_prec_uniprot = calc_precision(t_tp_prot, t_fp_uniprot)
+    t_recall_uniprot = calc_recall(t_tp_prot, t_fn_uniprot)
+
+    print "species doc level norm precision " + str(t_prec_species)
+    print "species doc level norm recall " + str(t_recall_species)
+    print "protein doc level norm precision " + str(t_prec_prot)
+    print "protein doc level norm recall " + str(t_recall_prot)
+    print "uniprot doc level norm precision " + str(t_prec_uniprot)
+    print "uniprot doc level norm recall " + str(t_recall_uniprot)
+
 def get_false_negs(count, tp):
     # get the number of false negatives from the number of annotations the other user made, and the number of true positives
     if count > tp:
         return count - tp
     else:
         return 0
+
+def get_count_in_uniprot(annot, annottype, uniprot, unreviewed):
+    count = 0
+    for a in annot:
+        if a['annottype'] == "e_2":
+            if a['norm'] in uniprot: # missing polyproteins in unreviewed, eh
+                count += 1
+    return count
 
 def get_count(annot, annottype):
     if annottype == "proteins":
@@ -1094,6 +1197,183 @@ def parse_uniprot_single_xml(filename):
         
     return allproteins
 
+def chains_longer(seen_chains, nc):
+    for k, sc in seen_chains.iteritems():
+        if int(sc['start']) <= int(nc['start']) and int(sc['end']) >= int(nc['end']):
+            return sc['name']
+    return False
+
+def chains_shorter(seen_chains, nc):
+    for k, sc in seen_chains.iteritems():
+        if int(sc['start']) >= int(nc['start']) and int(sc['end']) <= int(nc['end']):
+            return True
+        if int(sc['start']) <= int(nc['start']) and int(sc['end']) == int(nc['end']):
+            return True
+
+def chains_overlap(seen_chains, nc):
+    for k, sc in seen_chains.iteritems():
+        if int(sc['start']) < int(nc['start']) and int(sc['end']) < int(nc['end']) and int(sc['end']) > int(nc['start']):
+            return True
+
+
+def cleave_polyproteins(chosen_proteins):
+    ''' cleave polyproteins into functional units based on their chain entries
+    '''
+    # some viruses are just polyproteins; others are some proteins and a polyprotein; so have to check all proteins
+    reported_dup_chain = []
+    new_chosen_proteins = {}
+    for entry, i in chosen_proteins.iteritems():
+        if i['polyprotein']:
+            #chains = i['chain'].split("; ")
+            chains = i['chain']
+
+            # build a map of which residues are split into subchains
+            # use this to control which chains are output -- don't want any that contain duplicate proteins
+
+            seen_chains = {}
+            sc = {}
+
+            for chain in chains:
+
+                # the old way of doing this, from the tsv is commented
+
+                # match >34 and ?98 but not ? as position
+                #m = re.match("CHAIN <?\??([0-9]+) >?\??([0-9]+) (.*?)\..*FTId=(.*).", chain)
+                #print chain
+                #if m is None:
+                #    continue
+                #else:
+                    # add new proteins with correct sequence and id
+                    #start = int(m.groups()[0])
+                    #end = int(m.groups()[1])
+                    #name = m.groups()[2]
+                    #ftid = m.groups()[3]
+
+
+
+                start = int(chain['start'])
+                end = int(chain['end'])
+                name = chain['name']
+                ftid = chain['id']
+                aliases = chain['aliases']
+
+                short_name = ''
+                if 'short_name' in chain:
+                    short_name = chain['short_name']
+                    #print "------ got short name " + chain['short_name']
+
+                polyprotein = False
+                if re.search('olyprotein', name):
+                    polyprotein = True
+                if chain['name'] == i['protein_name']:
+                    polyprotein = True
+
+                this = {'start': start,
+                        'end': end,
+                        'name': name,
+                        'ftid': ftid,
+                        'aliases': aliases,
+                        'polyprotein': polyprotein,
+                        'short_name': short_name,
+                        }
+
+                # select only fragments of polyproteins that contain unique genes
+                # eg if there is polyproteinABC that is cleaved into polyproteinAB and ppC, and ppAB is then cleaved to ppA and ppB, then just keep chains for ppC, ppA and ppB
+
+                # if there is something longer than this in seen_chains
+                co = chains_longer(seen_chains, this)
+                if co:
+                    seen_chains.pop(co)
+                    # delete the longer
+                    seen_chains[name] = this
+                elif chains_shorter(seen_chains, this):
+                    pass # a shorter chain that overlaps this one is already in there
+                elif chains_overlap(seen_chains, this):
+                    print "OMG chains overlap, giving in " + i['isolate_name'] + " " + i['protein_name'] + " up on these" 
+                    pass
+                else:
+                    # just store this in seen_chains 
+                    seen_chains[name] = this
+
+            # then store the seen chains
+            for k, chain in seen_chains.iteritems():
+
+                if not polyprotein:
+                    for x in range(int(chain['start']), int(chain['end']) + 1):
+                        if x in sc:
+                            sc[x].append(chain['name'])
+                            if i['entry_name'] not in reported_dup_chain:
+                                reported_dup_chain.append(i['entry_name'])
+                        else:
+                            sc[x] = [ chain['name'] ]
+                dups = 0
+                for k, v in sc.iteritems():
+                    if len(v) > 1:
+                        dups += 1
+                if dups > 5:
+                    # allow a handful of aa overlaps
+                    print " ** duplicate chain in " + str(species) + " " + i['entry_name'] + " " + str(dups)
+                    print " ** " + str(sc)
+
+                this_protein = {}
+                # copy over all the existing keys
+                for key in i:
+                    if key != 'short_name':
+                        # only set the short name if it is in the chain (below)
+                        this_protein[key] = i[key]
+                # then update the few that need to be changed
+                this_protein['polyprotein_entry_name'] = i['entry_name']
+                this_protein['entry_name'] = chain['ftid']
+                this_protein['string_id'] = str(this_protein['species']) + "." + str(this_protein['entry_name'])
+                this_protein['protein_name'] = chain['name']
+                this_protein['polyprotein'] = chain['polyprotein']
+                this_protein['sequence'] = i['sequence'][chain['start'] - 1 : chain['end']]
+                this_protein['chain'] = ""
+                this_protein['aliases'] = chain['aliases']
+                this_protein['from_polyprotein'] = True
+                if 'short_name' in chain and chain['short_name'] != '':
+                    this_protein['short_name'] = chain['short_name']
+                    #print "set chain short name " + this_protein['entry_name'] + " to " + chain['short_name']
+
+
+                new_chosen_proteins[chain['ftid']] = this_protein
+            
+        
+        # for HIV-1 and HIV-2 gp-160 that need to be cleaved to gp120 and gp41
+        elif i['entry_name'] == 'ENV_HV1H2' or i['entry_name'] == 'ENV_HV2BE':
+            i['polyprotein'] = True
+            for chain in i['chain']:
+                start = int(chain['start'])
+                end = int(chain['end'])
+                name = chain['name']
+                ftid = chain['id']
+                aliases = chain['aliases']
+
+                polyprotein = False
+
+                this_protein = {}
+                # copy over all the existing keys
+                for key in i:
+                    this_protein[key] = i[key]
+                # then update the few that need to be changed
+                this_protein['polyprotein_entry_name'] = i['entry_name']
+                this_protein['entry_name'] = ftid
+                this_protein['string_id'] = str(this_protein['species']) + "." + str(this_protein['entry_name'])
+                this_protein['protein_name'] = name
+                this_protein['polyprotein'] = polyprotein
+                this_protein['sequence'] = i['sequence'][start - 1 : end]
+                this_protein['chain'] = ""
+                this_protein['aliases'] = aliases
+                this_protein['from_polyprotein'] = True
+
+                #print "******* Added " + i['entry_name'] + " " + ftid + " " + str(this_protein)
+
+                new_chosen_proteins[ftid] = this_protein
+
+    for k,v in new_chosen_proteins.iteritems():
+        chosen_proteins[k] = v
+            
+    return chosen_proteins
 def read_project_list(filename):
     projects = []
     with open(filename, 'r') as f:
@@ -1167,9 +1447,14 @@ def main():
     clean_up_old_results()
 
     uniprot = parse_uniprot_single_xml(args.uniprot)
+    polyprot = cleave_polyproteins(uniprot)
 
     unrev_path = "../../../uniprot_to_payload/data_in/proteomes_unreviewed/"
     unreviewed = parse_uniprot_proteome_dir(unrev_path)
+    unreviewed = cleave_polyproteins(unreviewed)
+
+    for k,v in polyprot.iteritems():
+        unreviewed[k] = v
 
     taxtree, taxlevel = tax.parse_taxtree(args.taxonomy, True)
 
@@ -1182,34 +1467,25 @@ def main():
 
     annotations = filter_annotations(annotations, taxtree, taxlevel) # remove annotations for species that are above species level
 
-    # get the list of unreviewed proteins to download and parse above
-    #print_unreviewed_proteins(annotations, uniprot)
+    # should be a command line switch
+    print_unreviewed = False
+    if print_unreviewed:
+        # get the list of unreviewed proteins to download and parse above
+        print_unreviewed_proteins(annotations, uniprot)
 
     consensus = human_consensus(annotations, uniprot, taxtree, taxlevel, unreviewed)
-    #pprint.pprint(annotations['3040055']['Helen'])
-    #pprint.pprint(consensus['3040055'])
-    #pprint.pprint(annotations['9191870']['Rudolfs'])
-    #pprint.pprint(consensus['9191870'])
-    #print " Rudolfs ***************************************"
-    #pprint.pprint(annotations['16227217']['Rudolfs'])
-    #print " Juanmi ***************************************"
-    #pprint.pprint(annotations['16227217']['Juanmi'])
-    #print " Consensus ***************************************"
-    #pprint.pprint(consensus['16227217'])
-    #print " cristina ***************************************"
-    #pprint.pprint(annotations['15680420']['Cristina'])
-    #print " helen ***************************************"
-    #pprint.pprint(annotations['15680420']['Helen'])
-    #print " Consensus ***************************************"
-    #pprint.pprint(consensus['15680420'])
-    iaa = inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed)
-    print_stats(iaa, False)
-    print_consensus(consensus)
-    print "combined results"
     combined = combine_annot(consensus, tagger_annot)
-    #pprint.pprint(combined)
-    stats = inter_annotator(combined, uniprot, taxtree, taxlevel, unreviewed)
-    print_stats(stats, True)
+
+    # should be a command line switch
+    doc_level = False
+    if doc_level:
+        doc_level_norm(combined, uniprot, taxtree, taxlevel, unreviewed)
+    else:
+        iaa = inter_annotator(annotations, uniprot, taxtree, taxlevel, unreviewed)
+        print_stats(iaa, False)
+        print_consensus(consensus)
+        stats = inter_annotator(combined, uniprot, taxtree, taxlevel, unreviewed)
+        print_stats(stats, True)
 
 
 if __name__ == "__main__":
